@@ -8,18 +8,20 @@ const ical = require('ical');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ===== Stripe =====
+// Stripe avec clé live depuis Railway
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ===== Détecter local / prod =====
+// Détecter si on est en local ou prod
 const isLocal = process.env.NODE_ENV !== 'production';
 const BASE_URL = isLocal ? `http://localhost:${PORT}` : 'https://livablom.fr';
 
+// Middlewares
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// ===== iCal =====
+// ======== iCal ========
+// URLs iCal pour chaque logement
 const calendars = {
   LIVA: [
     "https://calendar.google.com/calendar/ical/25b3ab9fef930d1760a10e762624b8f604389bdbf69d0ad23c98759fee1b1c89%40group.calendar.google.com/private-13c805a19f362002359c4036bf5234d6/basic.ics",
@@ -33,6 +35,7 @@ const calendars = {
   ]
 };
 
+// Fonction pour parser un iCal
 async function fetchICal(url, logement) {
   try {
     const res = await fetch(url);
@@ -53,7 +56,7 @@ async function fetchICal(url, logement) {
   }
 }
 
-// Endpoint iCal
+// Endpoint pour récupérer les réservations d’un logement
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
   if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
@@ -71,7 +74,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
   }
 });
 
-// ===== Stripe Endpoint =====
+// ======== Stripe ========
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix } = req.body;
 
@@ -92,7 +95,7 @@ app.post('/create-checkout-session', async (req, res) => {
       }],
       mode: 'payment',
       success_url: `${BASE_URL}/confirmation.html?success=true`,
-      cancel_url: `${BASE_URL}/blom.html`,
+      cancel_url: `${BASE_URL}/blom.html`, // provient de blom.md compilé par Jekyll
     });
 
     res.json({ url: session.url });
@@ -102,7 +105,5 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// ===== Serveur =====
-app.listen(PORT, () => {
-  console.log(`Serveur Stripe et iCal en écoute sur ${isLocal ? 'http://localhost:'+PORT : 'Railway/production'}`);
-});
+// ======== Serveur ========
+app.listen(PORT, () => console.log(`Serveur Stripe et iCal en écoute sur ${BASE_URL}`));
