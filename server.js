@@ -95,7 +95,7 @@ app.post('/create-checkout-session', async (req, res) => {
       }],
       mode: 'payment',
       success_url: `${BASE_URL}/confirmation.html?success=true`,
-      cancel_url: `${BASE_URL}/blom.html`, // provient de blom.md compilé par Jekyll
+      cancel_url: `${BASE_URL}/blom/`, // provient de blom.md compilé par Jekyll
     });
 
     res.json({ url: session.url });
