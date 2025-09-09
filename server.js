@@ -99,3 +99,16 @@ app.post('/create-checkout-session', async (req, res) => {
       success_url: `${BASE_URL}/confirmation.html?success=true`,
       cancel_url: `${BASE_URL}/blom/`,
       metadata: { date, logement, nuits, email }
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Échec de la création de la session Stripe' });
+  }
+});
+
+// ======== Serveur ========
+app.listen(PORT, () => {
+  console.log(`Serveur lancé sur ${BASE_URL}`);
+});
