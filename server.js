@@ -101,4 +101,17 @@ app.post('/webhook', async (req, res) => {
       reservations = JSON.parse(fs.readFileSync(reservationsFile, 'utf-8'));
     }
 
-    if (!reservatio
+    if (!reservations[logement]) reservations[logement] = [];
+    reservations[logement].push({ date, nuits: Number(nuits), email });
+
+    fs.writeFileSync(reservationsFile, JSON.stringify(reservations, null, 2));
+    console.log(`Date ${date} ajoutée pour ${logement}`);
+  }
+
+  res.status(200).send('Received');
+});
+
+// ======== Serveur ========
+app.listen(PORT, () => {
+  console.log(`Serveur lancé sur ${BASE_URL}`);
+});
