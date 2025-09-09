@@ -5,13 +5,13 @@ const Stripe = require('stripe');
 const fetch = require('node-fetch');
 const ical = require('ical');
 const fs = require('fs');
-const nodemailer = require('nodemailer');
 const bodyParser = require('body-parser');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Stripe avec clé live depuis Railway
+// Stripe
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // Détecter si on est en local ou prod
@@ -24,7 +24,6 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // ======== iCal ========
-// URLs iCal pour chaque logement
 const calendars = {
   LIVA: [
     "https://calendar.google.com/calendar/ical/25b3ab9fef930d1760a10e762624b8f604389bdbf69d0ad23c98759fee1b1c89%40group.calendar.google.com/private-13c805a19f362002359c4036bf5234d6/basic.ics",
@@ -38,7 +37,6 @@ const calendars = {
   ]
 };
 
-// Fonction pour parser un iCal
 async function fetchICal(url, logement) {
   try {
     const res = await fetch(url);
@@ -59,7 +57,7 @@ async function fetchICal(url, logement) {
   }
 }
 
-// Endpoint pour récupérer les réservations d’un logement
+// Endpoint réservations
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
   if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
@@ -79,7 +77,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
 
 // ======== Stripe Checkout ========
 app.post('/create-checkout-session', async (req, res) => {
-  const { date, logement, nuits, prix } = req.body;
+  const { date, logement, nuits, prix, email } = req.body;
 
   if (!date || !logement || !nuits || !prix) {
     return res.status(400).json({ error: 'Paramètres manquants' });
@@ -99,78 +97,4 @@ app.post('/create-checkout-session', async (req, res) => {
       mode: 'payment',
       success_url: `${BASE_URL}/confirmation.html?success=true`,
       cancel_url: `${BASE_URL}/blom/`,
-      metadata: { logement, date, nuits } // ✅ très utile pour le webhook
-    });
-
-    res.json({ url: session.url });
-  } catch (err) {
-    console.error('Erreur création session Stripe:', err);
-    res.status(500).json({ error: 'Erreur création session Stripe' });
-  }
-});
-
-// ======== Stripe Webhook ========
-app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
-  } catch (err) {
-    console.error('⚠️ Webhook signature failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-
-    // --- 1. Email ---
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-
-    const mailOptions = {
-      from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_USER,
-      subject: 'Nouvelle réservation BLŌM',
-      text: `Réservation confirmée !\n
-        Logement : ${session.metadata.logement}
-        Date : ${session.metadata.date}
-        Nuits : ${session.metadata.nuits}
-        Montant : ${session.amount_total / 100} €\n
-        Client : ${session.customer_email || 'non communiqué'}`
-    };
-
-    transporter.sendMail(mailOptions, (error, info) => {
-      if (error) console.error(error);
-      else console.log('✅ Email envoyé:', info.response);
-    });
-
-    // --- 2. JSON local ---
-    const reservationsFile = './reservations.json';
-    let reservations = [];
-    if (fs.existsSync(reservationsFile)) {
-      reservations = JSON.parse(fs.readFileSync(reservationsFile));
-    }
-
-    reservations.push({
-      date: session.metadata.date,
-      logement: session.metadata.logement,
-      nuits: session.metadata.nuits,
-      prix: session.amount_total / 100
-    });
-
-    fs.writeFileSync(reservationsFile, JSON.stringify(reservations, null, 2));
-  }
-
-  res.status(200).send('Received.');
-});
-
-// ======== Serveur ========
-app.listen(PORT, () => console.log(`Serveur Stripe et iCal en écoute sur ${BASE_URL}`));
+      metadata: { date, logement, nuits, email }
