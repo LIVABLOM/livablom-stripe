@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Test Stripe Checkout</title>
+  <script src="https://js.stripe.com/v3/"></script>
+</head>
+<body>
+  <h1>Test Stripe Checkout</h1>
+
+  <form id="checkout-form">
+    <label>Date: <input type="date" id="date" required></label><br><br>
+    <label>Logement: 
+      <select id="logement">
+        <option value="LIVA">LIVA</option>
+        <option value="BLŌM">BLŌM</option>
+      </select>
+    </label><br><br>
+    <label>Nuits: <input type="number" id="nuits" value="1" min="1"></label><br><br>
+    <label>Prix (€): <input type="number" id="prix" value="150" min="1"></label><br><br>
+    <label>Email: <input type="email" id="email" required></label><br><br>
+    <button type="submit">Payer</button>
+  </form>
+
+  <script>
+    const form = document.getElementById('checkout-form');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const data = {
+        date: document.getElementById('date').value,
+        logement: document.getElementById('logement').value,
+        nuits: parseInt(document.getElementById('nuits').value),
+        prix: parseFloat(document.getElementById('prix').value),
+        email: document.getElementById('email').value
+      };
+
+      try {
+        const response = await fetch('https://livablom-stripe-production.up.railway.app/create-checkout-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        const session = await response.json();
+
+        if (session.url) {
+          // Redirige vers Stripe Checkout
+          window.location.href = session.url;
+        } else {
+          alert('Erreur lors de la création de la session');
+          console.error(session);
+        }
+      } catch (err) {
+        console.error('Erreur fetch:', err);
+        alert('Erreur lors de la connexion au serveur');
+      }
+    });
+  </script>
+</body>
+</html>
