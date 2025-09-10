@@ -80,11 +80,12 @@ app.get("/api/reservations/:logement", async (req, res) => {
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
 
-  if (!date || !logement || !nuits || !prix || !email) {
+  if (!date || !logement || !nuits || !prix) {
     return res.status(400).json({ error: 'Paramètres manquants' });
   }
 
   try {
+    // --- switch TEST vs NORMAL ---
     let finalAmount = prix * 100;
     if (process.env.TEST_PAYMENT === "true") {
       finalAmount = 100; // 1 €
@@ -106,7 +107,6 @@ app.post('/create-checkout-session', async (req, res) => {
       metadata: { date, logement, nuits, email }
     });
 
-    // Retourne l'URL pour redirection côté front
     res.json({ url: session.url });
   } catch (err) {
     console.error(err);
@@ -132,7 +132,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
-    // ====== Enregistrement de la réservation ======
     const filePath = './reservations.json';
     let reservations = {};
     if (fs.existsSync(filePath)) {
@@ -164,17 +163,16 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     const mailOptions = {
       from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
-      to: `${email}, ${process.env.EMAIL_USER}`, // client + toi
-      subject: `Confirmation de réservation : ${logement}`,
-      text: `Bonjour,\n\nVotre réservation pour ${logement} a été confirmée.\n\nDate : ${date}\nNombre de nuits : ${nuits}\n\nMerci pour votre confiance.\n\nL'équipe LIVABLŌM`
+      to: process.env.EMAIL_USER, // toi
+      subject: `Nouvelle réservation : ${logement}`,
+      text: `Réservation confirmée pour ${logement}\nDate : ${date}\nNombre de nuits : ${nuits}\nEmail client : ${email}`
     };
 
     transporter.sendMail(mailOptions, (error, info) => {
       if (error) {
-        console.error("❌ Erreur envoi email :", error);
-      } else {
-        console.log("📧 Email envoyé avec succès :", info.response);
+        return console.error("❌ Erreur envoi email :", error);
       }
+      console.log("📧 Email envoyé :", info.response);
     });
   }
 
