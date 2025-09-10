@@ -80,12 +80,11 @@ app.get("/api/reservations/:logement", async (req, res) => {
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
 
-  if (!date || !logement || !nuits || !prix) {
+  if (!date || !logement || !nuits || !prix || !email) {
     return res.status(400).json({ error: 'Paramètres manquants' });
   }
 
   try {
-    // --- switch TEST vs NORMAL ---
     let finalAmount = prix * 100;
     if (process.env.TEST_PAYMENT === "true") {
       finalAmount = 100; // 1 €
@@ -132,6 +131,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
+    // ====== Enregistrement de la réservation ======
     const filePath = './reservations.json';
     let reservations = {};
     if (fs.existsSync(filePath)) {
@@ -163,16 +163,17 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     const mailOptions = {
       from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_USER, // toi
-      subject: `Nouvelle réservation : ${logement}`,
-      text: `Réservation confirmée pour ${logement}\nDate : ${date}\nNombre de nuits : ${nuits}\nEmail client : ${email}`
+      to: `${email}, ${process.env.EMAIL_USER}`, // envoi au client et à toi
+      subject: `Confirmation de réservation : ${logement}`,
+      text: `Bonjour,\n\nVotre réservation pour ${logement} a été confirmée.\n\nDate : ${date}\nNombre de nuits : ${nuits}\n\nMerci pour votre confiance.\n\nL'équipe LIVABLŌM`
     };
 
     transporter.sendMail(mailOptions, (error, info) => {
       if (error) {
-        return console.error("❌ Erreur envoi email :", error);
+        console.error("❌ Erreur envoi email :", error);
+      } else {
+        console.log("📧 Email envoyé avec succès :", info.response);
       }
-      console.log("📧 Email envoyé :", info.response);
     });
   }
 
