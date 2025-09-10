@@ -5,6 +5,7 @@ const Stripe = require('stripe');
 const fetch = require('node-fetch');
 const ical = require('ical');
 const fs = require('fs');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -24,16 +25,8 @@ app.use(express.static('public'));
 
 // ======== iCal ========
 const calendars = {
-  LIVA: [
-    "https://calendar.google.com/calendar/ical/25b3ab9fef930d1760a10e762624b8f604389bdbf69d0ad23c98759fee1b1c89%40group.calendar.google.com/private-13c805a19f362002359c4036bf5234d6/basic.ics",
-    "https://www.airbnb.fr/calendar/ical/41095534.ics?s=723d983690200ff422703dc7306303de",
-    "https://ical.booking.com/v1/export?t=30a4b8a1-39a3-4dae-9021-0115bdd5e49d"
-  ],
-  BLOM: [
-    "https://calendar.google.com/calendar/ical/c686866e780e72a89dd094dedc492475386f2e6ee8e22b5a63efe7669d52621b%40group.calendar.google.com/private-a78ad751bafd3b6f19cf5874453e6640/basic.ics",
-    "https://www.airbnb.fr/calendar/ical/985569147645507170.ics?s=b9199a1a132a6156fcce597fe4786c1e",
-    "https://ical.booking.com/v1/export?t=8b652fed-8787-4a0c-974c-eb139f83b20f"
-  ]
+  LIVA: [/* URLs iCal de LIVA */],
+  BLOM: [/* URLs iCal de BLOM */]
 };
 
 async function fetchICal(url, logement) {
@@ -56,7 +49,6 @@ async function fetchICal(url, logement) {
   }
 }
 
-// Endpoint réservations iCal
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
   if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
@@ -67,6 +59,16 @@ app.get("/api/reservations/:logement", async (req, res) => {
       const e = await fetchICal(url, logement);
       events = events.concat(e);
     }
+
+    // Ajout des réservations locales
+    const filePath = './reservations.json';
+    if (fs.existsSync(filePath)) {
+      const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      if (localReservations[logement]) {
+        events = events.concat(localReservations[logement]);
+      }
+    }
+
     res.json(events);
   } catch (err) {
     console.error(err);
@@ -84,7 +86,7 @@ app.post('/create-checkout-session', async (req, res) => {
 
   try {
     // --- switch TEST vs NORMAL ---
-    let finalAmount = prix * 100; // par défaut : prix réel
+    let finalAmount = prix * 100;
     if (process.env.TEST_PAYMENT === "true") {
       finalAmount = 100; // 1 €
     }
@@ -135,7 +137,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     if (fs.existsSync(filePath)) {
       reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     }
-
     if (!reservations[logement]) reservations[logement] = [];
 
     const startDate = new Date(date);
@@ -150,6 +151,29 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
     console.log("📅 Réservation enregistrée !");
+
+    // ====== Envoi Email ======
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+
+    const mailOptions = {
+      from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_USER, // toi
+      subject: `Nouvelle réservation : ${logement}`,
+      text: `Réservation confirmée pour ${logement}\nDate : ${date}\nNombre de nuits : ${nuits}\nEmail client : ${email}`
+    };
+
+    transporter.sendMail(mailOptions, (error, info) => {
+      if (error) {
+        return console.error("❌ Erreur envoi email :", error);
+      }
+      console.log("📧 Email envoyé :", info.response);
+    });
   }
 
   res.json({ received: true });
