@@ -115,7 +115,6 @@ app.post('/create-checkout-session', async (req, res) => {
 });
 
 // ======== Stripe Webhook ========
-// Important : express.raw doit être avant express.json() pour ce endpoint
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
 
