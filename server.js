@@ -106,6 +106,7 @@ app.post('/create-checkout-session', async (req, res) => {
       metadata: { date, logement, nuits, email }
     });
 
+    // Retourne l'URL pour redirection côté front
     res.json({ url: session.url });
   } catch (err) {
     console.error(err);
@@ -114,6 +115,7 @@ app.post('/create-checkout-session', async (req, res) => {
 });
 
 // ======== Stripe Webhook ========
+// Important : express.raw doit être avant express.json() pour ce endpoint
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
 
@@ -163,7 +165,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     const mailOptions = {
       from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
-      to: `${email}, ${process.env.EMAIL_USER}`, // envoi au client et à toi
+      to: `${email}, ${process.env.EMAIL_USER}`, // client + toi
       subject: `Confirmation de réservation : ${logement}`,
       text: `Bonjour,\n\nVotre réservation pour ${logement} a été confirmée.\n\nDate : ${date}\nNombre de nuits : ${nuits}\n\nMerci pour votre confiance.\n\nL'équipe LIVABLŌM`
     };
