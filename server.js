@@ -107,6 +107,16 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
   res.json({ received: true });
 });
+// Endpoint de test des variables d'environnement (à retirer après vérification)
+app.get('/env-test', (req, res) => {
+  res.json({
+    PORT: process.env.PORT,
+    STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY ? 'OK' : 'NON DEFINIE',
+    EMAIL_USER: process.env.EMAIL_USER ? 'OK' : 'NON DEFINIE',
+    NODE_ENV: process.env.NODE_ENV
+  });
+});
+
 
 app.listen(PORT, () => {
   console.log(`Serveur lancé sur ${BASE_URL}`);
