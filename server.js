@@ -5,8 +5,7 @@ const Stripe = require('stripe');
 const fetch = require('node-fetch');
 const ical = require('ical');
 const fs = require('fs');
-const bodyParser = require('body-parser');
-const nodemailer = require('nodemailer');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -57,17 +56,30 @@ async function fetchICal(url, logement) {
   }
 }
 
-// Endpoint réservations
+// ======== Endpoint réservations ========
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
-  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
+
+  // On lit le fichier reservations.json
+  const filePath = path.join(__dirname, 'reservations.json');
+  let localReservations = {};
+  try {
+    localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch (err) {
+    console.error("Impossible de lire reservations.json", err);
+  }
+
+  if (!localReservations[logement]) return res.status(404).json({ error: "Logement inconnu" });
 
   try {
-    let events = [];
-    for (const url of calendars[logement]) {
+    let events = [...localReservations[logement]];
+
+    // On ajoute les events iCal externes
+    for (const url of (calendars[logement] || [])) {
       const e = await fetchICal(url, logement);
       events = events.concat(e);
     }
+
     res.json(events);
   } catch (err) {
     console.error(err);
@@ -75,50 +87,25 @@ app.get("/api/reservations/:logement", async (req, res) => {
   }
 });
 
-// ======= Calcul du prix avec possibilité de prix manuel =======
-function calculerPrix(date, logement) {
-  // Dates avec prix manuel pour tests rapides
-  const prixManuel = {
-    "2025-09-11": 1,   // ← test réel Stripe à 1 €
-    // tu peux ajouter d'autres dates ici
-  };
-  if (prixManuel[date]) return prixManuel[date];
-
-  const jour = new Date(date).getDay(); // 0 = Dimanche, 1 = Lundi ...
-
-  if (logement === "BLOM") {
-    if (jour === 5 || jour === 6) return 169; // Vendredi & Samedi
-    if (jour === 0) return 190;               // Dimanche
-    return 150;                               // Lundi à Jeudi
-  }
-
-  if (logement === "LIVA") {
-    if (jour === 5 || jour === 6) return 120;
-    if (jour === 0) return 140;
-    return 100;
-  }
-
-  return 150; // prix par défaut si logement inconnu
-}
-
 // ======== Stripe Checkout ========
 app.post('/create-checkout-session', async (req, res) => {
-  const { date, logement, nuits, email } = req.body;
+  const { date, logement, nuits, prix, email } = req.body;
 
-  if (!date || !logement || !nuits) {
+  if (!date || !logement || !nuits || !prix) {
     return res.status(400).json({ error: 'Paramètres manquants' });
   }
 
-  const prixFinal = calculerPrix(date, logement);
-
   try {
+    // Si TEST_PAYMENT est true dans le .env, on force 1€
+    const montant = process.env.TEST_PAYMENT === 'true' ? 1 : prix;
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
         price_data: {
           currency: 'eur',
           product_data: { name: `${logement} - ${nuits} nuit(s)` },
-          unit_amount: prixFinal * 100, // montant en centimes
+          unit_amount: montant * 100, // montant en centimes
         },
         quantity: 1,
       }],
