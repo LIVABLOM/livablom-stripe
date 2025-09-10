@@ -2,10 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const Stripe = require('stripe');
+const fetch = require('node-fetch');
+const ical = require('ical');
 const fs = require('fs');
 const nodemailer = require('nodemailer');
-const bodyParser = require('body-parser');
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -22,14 +22,120 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// ======== Body parser pour Stripe Webhook ========
-app.use('/webhook', bodyParser.raw({ type: 'application/json' }));
+// ======== iCal (Airbnb / Booking / Google Calendar) ========
+const calendars = {
+  LIVA: [
+    "https://calendar.google.com/calendar/ical/25b3ab9fef930d1760a10e762624b8f604389bdbf69d0ad23c98759fee1b1c89%40group.calendar.google.com/private-13c805a19f362002359c4036bf5234d6/basic.ics",
+    "https://www.airbnb.fr/calendar/ical/41095534.ics?s=723d983690200ff422703dc7306303de",
+    "https://ical.booking.com/v1/export?t=30a4b8a1-39a3-4dae-9021-0115bdd5e49d"
+  ],
+  BLOM: [
+    "https://calendar.google.com/calendar/ical/c686866e780e72a89dd094dedc492475386f2e6ee8e22b5a63efe7669d52621b%40group.calendar.google.com/private-a78ad751bafd3b6f19cf5874453e6640/basic.ics",
+    "https://www.airbnb.fr/calendar/ical/985569147645507170.ics?s=b9199a1a132a6156fcce597fe4786c1e",
+    "https://ical.booking.com/v1/export?t=8b652fed-8787-4a0c-974c-eb139f83b20f"
+  ]
+};
+
+async function fetchICal(url, logement) {
+  try {
+    const res = await fetch(url);
+    const data = await res.text();
+    const parsed = ical.parseICS(data);
+
+    return Object.values(parsed)
+      .filter(ev => ev.start && ev.end)
+      .map(ev => ({
+        summary: ev.summary || "Réservé",
+        start: ev.start,
+        end: ev.end,
+        logement
+      }));
+  } catch (err) {
+    console.error("Erreur iCal pour", url, err);
+    return [];
+  }
+}
+
+// Endpoint réservations externes
+app.get("/api/reservations/:logement", async (req, res) => {
+  const logement = req.params.logement.toUpperCase();
+  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
+
+  try {
+    let events = [];
+    for (const url of calendars[logement]) {
+      const e = await fetchICal(url, logement);
+      events = events.concat(e);
+    }
+    res.json(events);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// ======== Réservations locales (JSON) ========
+const reservationsFile = "reservations.json";
+
+// Lire les réservations existantes
+function readReservations() {
+  try {
+    if (fs.existsSync(reservationsFile)) {
+      const data = fs.readFileSync(reservationsFile, "utf8");
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error("Erreur lecture réservations :", err);
+  }
+  return { BLOM: [], LIVA: [] }; // valeur par défaut
+}
+
+// Écrire les réservations
+function writeReservations(data) {
+  try {
+    fs.writeFileSync(reservationsFile, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error("Erreur écriture réservations :", err);
+  }
+}
+
+// Endpoint pour récupérer les réservations locales
+app.get("/api/local-reservations/:logement", (req, res) => {
+  const logement = req.params.logement.toUpperCase();
+  const reservations = readReservations();
+  if (!reservations[logement]) {
+    return res.status(404).json({ error: "Logement inconnu" });
+  }
+  res.json(reservations[logement]);
+});
+
+// Endpoint pour ajouter une réservation locale
+app.post("/api/local-reservations/:logement", (req, res) => {
+  const logement = req.params.logement.toUpperCase();
+  const { start, end } = req.body;
+
+  if (!start || !end) {
+    return res.status(400).json({ error: "Dates manquantes" });
+  }
+
+  const reservations = readReservations();
+  if (!reservations[logement]) reservations[logement] = [];
+
+  reservations[logement].push({
+    title: "Réservé",
+    start,
+    end
+  });
+
+  writeReservations(reservations);
+  res.json({ success: true });
+});
 
 // ======== Stripe Checkout ========
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
 
-  if (!date || !logement || !nuits || !prix || !email) {
+  if (!date || !logement || !nuits || !prix) {
     return res.status(400).json({ error: 'Paramètres manquants' });
   }
 
@@ -55,60 +161,6 @@ app.post('/create-checkout-session', async (req, res) => {
     console.error(err);
     res.status(500).json({ error: 'Échec de la création de la session Stripe' });
   }
-});
-
-// ======== Webhook Stripe ========
-app.post('/webhook', async (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.error('Webhook signature failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-    const { date, logement, nuits, email } = session.metadata;
-
-    // 1️⃣ Envoyer un mail
-    const transporter = nodemailer.createTransport({
-      service: 'gmail', // ou autre selon ton email
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: `Réservation confirmée pour ${logement}`,
-      text: `Merci pour votre réservation de ${nuits} nuit(s) le ${date} pour ${logement}.`
-    };
-
-    transporter.sendMail(mailOptions, (err, info) => {
-      if (err) console.error('Erreur mail:', err);
-      else console.log('Mail envoyé:', info.response);
-    });
-
-    // 2️⃣ Bloquer la date localement
-    const reservationsFile = path.join(__dirname, 'reservations.json');
-    let reservations = {};
-    if (fs.existsSync(reservationsFile)) {
-      reservations = JSON.parse(fs.readFileSync(reservationsFile, 'utf-8'));
-    }
-
-    if (!reservations[logement]) reservations[logement] = [];
-    reservations[logement].push({ date, nuits: Number(nuits), email });
-
-    fs.writeFileSync(reservationsFile, JSON.stringify(reservations, null, 2));
-    console.log(`Date ${date} ajoutée pour ${logement}`);
-  }
-
-  res.status(200).send('Received');
 });
 
 // ======== Serveur ========
