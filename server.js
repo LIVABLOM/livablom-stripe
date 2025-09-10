@@ -5,13 +5,15 @@ const Stripe = require('stripe');
 const fetch = require('node-fetch');
 const ical = require('ical');
 const fs = require('fs');
-const path = require('path');
+const bodyParser = require('body-parser');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
 // Stripe
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
 
 // Détecter si on est en local ou prod
 const isLocal = process.env.NODE_ENV !== 'production';
@@ -56,30 +58,17 @@ async function fetchICal(url, logement) {
   }
 }
 
-// ======== Endpoint réservations ========
+// Endpoint réservations iCal
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
-
-  // On lit le fichier reservations.json
-  const filePath = path.join(__dirname, 'reservations.json');
-  let localReservations = {};
-  try {
-    localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-  } catch (err) {
-    console.error("Impossible de lire reservations.json", err);
-  }
-
-  if (!localReservations[logement]) return res.status(404).json({ error: "Logement inconnu" });
+  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
 
   try {
-    let events = [...localReservations[logement]];
-
-    // On ajoute les events iCal externes
-    for (const url of (calendars[logement] || [])) {
+    let events = [];
+    for (const url of calendars[logement]) {
       const e = await fetchICal(url, logement);
       events = events.concat(e);
     }
-
     res.json(events);
   } catch (err) {
     console.error(err);
@@ -96,16 +85,13 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 
   try {
-    // Si TEST_PAYMENT est true dans le .env, on force 1€
-    const montant = process.env.TEST_PAYMENT === 'true' ? 1 : prix;
-
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
         price_data: {
           currency: 'eur',
           product_data: { name: `${logement} - ${nuits} nuit(s)` },
-          unit_amount: montant * 100, // montant en centimes
+          unit_amount: prix * 100,
         },
         quantity: 1,
       }],
@@ -122,7 +108,50 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
+// ======== Stripe Webhook ========
+app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+  const sig = req.headers['stripe-signature'];
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+  } catch (err) {
+    console.error("⚠️ Erreur webhook :", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const { date, logement, nuits, email } = session.metadata;
+
+    console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
+
+    const filePath = './reservations.json';
+    let reservations = {};
+    if (fs.existsSync(filePath)) {
+      reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    }
+
+    if (!reservations[logement]) reservations[logement] = [];
+
+    const startDate = new Date(date);
+    const endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + parseInt(nuits));
+
+    reservations[logement].push({
+      title: `Réservé (${email})`,
+      start: startDate.toISOString().split('T')[0],
+      end: endDate.toISOString().split('T')[0]
+    });
+
+    fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
+    console.log("📅 Réservation enregistrée !");
+  }
+
+  res.json({ received: true });
+});
+
 // ======== Serveur ========
 app.listen(PORT, () => {
-  console.log(`Serveur lancé sur ${BASE_URL}`);
+  console.log(`🚀 Serveur lancé sur ${BASE_URL}`);
 });
