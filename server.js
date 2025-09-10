@@ -5,8 +5,6 @@ const Stripe = require('stripe');
 const fetch = require('node-fetch');
 const ical = require('ical');
 const fs = require('fs');
-const bodyParser = require('body-parser');
-const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -85,13 +83,19 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 
   try {
+    // --- switch TEST vs NORMAL ---
+    let finalAmount = prix * 100; // par défaut : prix réel
+    if (process.env.TEST_PAYMENT === "true") {
+      finalAmount = 100; // 1 €
+    }
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
         price_data: {
           currency: 'eur',
           product_data: { name: `${logement} - ${nuits} nuit(s)` },
-          unit_amount: prix * 100,
+          unit_amount: finalAmount,
         },
         quantity: 1,
       }],
