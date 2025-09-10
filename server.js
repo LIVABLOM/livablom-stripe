@@ -2,34 +2,114 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const Stripe = require('stripe');
+const fetch = require('node-fetch');
+const ical = require('ical');
 const fs = require('fs');
+const bodyParser = require('body-parser');
 const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// Stripe
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-const isLocal = process.env.NODE_ENV !== 'production';
-const BASE_URL = isLocal ? `http://localhost:${PORT}` : 'https://livablom-stripe-production.up.railway.app';
 
+// Détecter si on est en local ou prod
+const isLocal = process.env.NODE_ENV !== 'production';
+const BASE_URL = isLocal ? `http://localhost:${PORT}` : 'https://livablom.fr';
+
+// Middlewares
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// ======== Endpoint réservations JSON ========
-app.get("/api/reservations/:logement", (req, res) => {
+// ======== iCal ========
+const calendars = {
+  LIVA: [
+    "https://calendar.google.com/calendar/ical/25b3ab9fef930d1760a10e762624b8f604389bdbf69d0ad23c98759fee1b1c89%40group.calendar.google.com/private-13c805a19f362002359c4036bf5234d6/basic.ics",
+    "https://www.airbnb.fr/calendar/ical/41095534.ics?s=723d983690200ff422703dc7306303de",
+    "https://ical.booking.com/v1/export?t=30a4b8a1-39a3-4dae-9021-0115bdd5e49d"
+  ],
+  BLOM: [
+    "https://calendar.google.com/calendar/ical/c686866e780e72a89dd094dedc492475386f2e6ee8e22b5a63efe7669d52621b%40group.calendar.google.com/private-a78ad751bafd3b6f19cf5874453e6640/basic.ics",
+    "https://www.airbnb.fr/calendar/ical/985569147645507170.ics?s=b9199a1a132a6156fcce597fe4786c1e",
+    "https://ical.booking.com/v1/export?t=8b652fed-8787-4a0c-974c-eb139f83b20f"
+  ]
+};
+
+async function fetchICal(url, logement) {
+  try {
+    const res = await fetch(url);
+    const data = await res.text();
+    const parsed = ical.parseICS(data);
+
+    return Object.values(parsed)
+      .filter(ev => ev.start && ev.end)
+      .map(ev => ({
+        summary: ev.summary || "Réservé",
+        start: ev.start,
+        end: ev.end,
+        logement
+      }));
+  } catch (err) {
+    console.error("Erreur iCal pour", url, err);
+    return [];
+  }
+}
+
+// Endpoint réservations
+app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
-  const reservationsData = require("./reservations.json");
-  const reservations = reservationsData[logement] || [];
-  res.json(reservations);
+  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
+
+  try {
+    let events = [];
+    for (const url of calendars[logement]) {
+      const e = await fetchICal(url, logement);
+      events = events.concat(e);
+    }
+    res.json(events);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
 });
+
+// ======= Calcul du prix avec possibilité de prix manuel =======
+function calculerPrix(date, logement) {
+  // Dates avec prix manuel pour tests rapides
+  const prixManuel = {
+    "2025-09-11": 1,   // ← test réel Stripe à 1 €
+    // tu peux ajouter d'autres dates ici
+  };
+  if (prixManuel[date]) return prixManuel[date];
+
+  const jour = new Date(date).getDay(); // 0 = Dimanche, 1 = Lundi ...
+
+  if (logement === "BLOM") {
+    if (jour === 5 || jour === 6) return 169; // Vendredi & Samedi
+    if (jour === 0) return 190;               // Dimanche
+    return 150;                               // Lundi à Jeudi
+  }
+
+  if (logement === "LIVA") {
+    if (jour === 5 || jour === 6) return 120;
+    if (jour === 0) return 140;
+    return 100;
+  }
+
+  return 150; // prix par défaut si logement inconnu
+}
 
 // ======== Stripe Checkout ========
 app.post('/create-checkout-session', async (req, res) => {
-  const { date, logement, nuits, prix, email } = req.body;
-  if (!date || !logement || !nuits || !prix || !email) {
+  const { date, logement, nuits, email } = req.body;
+
+  if (!date || !logement || !nuits) {
     return res.status(400).json({ error: 'Paramètres manquants' });
   }
+
+  const prixFinal = calculerPrix(date, logement);
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -38,7 +118,7 @@ app.post('/create-checkout-session', async (req, res) => {
         price_data: {
           currency: 'eur',
           product_data: { name: `${logement} - ${nuits} nuit(s)` },
-          unit_amount: prix * 100,
+          unit_amount: prixFinal * 100, // montant en centimes
         },
         quantity: 1,
       }],
@@ -55,59 +135,7 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// ======== Webhook Stripe pour valider paiement ========
-app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.log('Erreur webhook', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-    const { date, logement, nuits, email } = session.metadata;
-
-    // Ajouter réservation dans reservations.json
-    const reservationsFile = './reservations.json';
-    const reservationsData = JSON.parse(fs.readFileSync(reservationsFile));
-    if (!reservationsData[logement]) reservationsData[logement] = [];
-    
-    const startDate = date;
-    const endDate = new Date(new Date(date).getTime() + (parseInt(nuits) * 24 * 60 * 60 * 1000));
-    reservationsData[logement].push({
-      title: "Réservé",
-      start: startDate,
-      end: endDate.toISOString().split('T')[0]
-    });
-
-    fs.writeFileSync(reservationsFile, JSON.stringify(reservationsData, null, 2));
-
-    // Envoyer email
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-    });
-
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: `Confirmation réservation ${logement}`,
-      text: `Votre réservation de ${nuits} nuit(s) pour ${logement} le ${date} a été confirmée. Merci !`
-    };
-
-    transporter.sendMail(mailOptions, (err, info) => {
-      if (err) console.error('Erreur mail', err);
-      else console.log('Mail envoyé :', info.response);
-    });
-  }
-
-  res.json({ received: true });
-});
-
+// ======== Serveur ========
 app.listen(PORT, () => {
   console.log(`Serveur lancé sur ${BASE_URL}`);
 });
