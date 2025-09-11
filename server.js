@@ -10,27 +10,26 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Détection du mode
-const isProduction = process.env.NODE_ENV === 'production';
+// Détecter si on est en local ou production
+const isLocal = process.env.NODE_ENV !== 'production';
+const BASE_URL = isLocal ? `http://localhost:${PORT}` : 'https://livablom.fr';
 
-// Stripe : choisir clé test ou production
-const stripe = Stripe(
-  isProduction ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_SECRET_KEY
-);
+// Choix de la clé Stripe selon le mode
+const stripeSecretKey = isLocal
+  ? process.env.STRIPE_TEST_SECRET_KEY
+  : process.env.STRIPE_SECRET_KEY;
 
-// Webhook : clé correspondante
-const endpointSecret = isProduction
-  ? process.env.STRIPE_WEBHOOK_SECRET
-  : process.env.STRIPE_WEBHOOK_TEST_SECRET;
+const stripe = Stripe(stripeSecretKey);
 
-// URL de base
-const BASE_URL = isProduction ? 'https://livablom.fr' : `http://localhost:${PORT}`;
+// Webhook
+const endpointSecret = isLocal
+  ? process.env.STRIPE_WEBHOOK_TEST_SECRET
+  : process.env.STRIPE_WEBHOOK_SECRET;
 
 // Middlewares
 app.use(cors());
-// Important : express.json() pour tout sauf webhook
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
-app.use(express.static('public'));
+app.use(express.static('public')); // pour confirmation.html et autres assets
 
 // ======== iCal ========
 const calendars = {
@@ -65,7 +64,8 @@ app.get("/api/reservations/:logement", async (req, res) => {
   try {
     let events = [];
     for (const url of calendars[logement]) {
-      events = events.concat(await fetchICal(url, logement));
+      const e = await fetchICal(url, logement);
+      events = events.concat(e);
     }
 
     const filePath = './reservations.json';
@@ -84,11 +84,14 @@ app.get("/api/reservations/:logement", async (req, res) => {
 // ======== Stripe Checkout ========
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
-  if (!date || !logement || !nuits || !prix) return res.status(400).json({ error: 'Paramètres manquants' });
+
+  if (!date || !logement || !nuits || !prix) {
+    return res.status(400).json({ error: 'Paramètres manquants' });
+  }
 
   try {
     let finalAmount = prix * 100;
-    if (!isProduction) finalAmount = 100; // 1€ en test
+    if (isLocal) finalAmount = 100; // 1 € pour test local
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -116,10 +119,10 @@ app.post('/create-checkout-session', async (req, res) => {
 // ======== Stripe Webhook ========
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
-  let event;
 
+  let event;
   try {
-    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    event = stripe.webhooks.constructEvent(req.rawBody, sig, endpointSecret);
   } catch (err) {
     console.error("⚠️ Erreur webhook :", err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
@@ -131,7 +134,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
-    // Blocage date local
     const filePath = './reservations.json';
     let reservations = {};
     if (fs.existsSync(filePath)) reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -150,7 +152,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
     console.log("📅 Réservation enregistrée !");
 
-    // Envoi email
+    // Envoi d'email
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -177,5 +179,5 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
 // ======== Serveur ========
 app.listen(PORT, () => {
-  console.log(`🚀 Serveur lancé sur ${BASE_URL} (${isProduction ? 'PROD' : 'TEST'})`);
+  console.log(`🚀 Serveur lancé sur ${BASE_URL}`);
 });
