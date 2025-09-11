@@ -162,11 +162,15 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     });
 
     const mailOptions = {
-      from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_USER, // toi
-      subject: `Nouvelle réservation : ${logement}`,
-      text: `Réservation confirmée pour ${logement}\nDate : ${date}\nNombre de nuits : ${nuits}\nEmail client : ${email}`
-    };
+  from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
+  to: process.env.livablom59@gmail.com, // uniquement toi
+  subject: `Nouvelle réservation : ${logement}`,
+  text: `Réservation confirmée pour ${logement}
+Date : ${date}
+Nombre de nuits : ${nuits}
+Email client : ${email}`
+};
+
 
     transporter.sendMail(mailOptions, (error, info) => {
       if (error) {
