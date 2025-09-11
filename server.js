@@ -10,17 +10,19 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Stripe
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
-
 // Détecter si on est en local ou prod
 const isLocal = process.env.NODE_ENV !== 'production';
 const BASE_URL = isLocal ? `http://localhost:${PORT}` : 'https://livablom.fr';
 
+// Stripe
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const endpointSecret = isLocal 
+  ? process.env.STRIPE_WEBHOOK_TEST_SECRET 
+  : process.env.STRIPE_WEBHOOK_SECRET;
+
 // Middlewares
 app.use(cors());
-// IMPORTANT : ne pas utiliser express.json() globalement avant le webhook
+// Important : ne pas utiliser express.json() globalement avant le webhook
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
 
 // ======== iCal ========
@@ -77,7 +79,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
 
-  if (!date || !logement || !nuits || !prix) {
+  if (!date || !logement || !nuits || !prix || !email) {
     return res.status(400).json({ error: 'Paramètres manquants' });
   }
 
@@ -109,7 +111,6 @@ app.post('/create-checkout-session', async (req, res) => {
 });
 
 // ======== Stripe Webhook ========
-// IMPORTANT : utiliser express.raw() pour Stripe
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
@@ -146,7 +147,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
     console.log("📅 Réservation enregistrée !");
 
-    // Envoi d'un email uniquement à toi
+    // Envoi d'un email à toi (ou au client si tu veux)
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -157,7 +158,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     const mailOptions = {
       from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_USER, // toi uniquement
+      to: process.env.EMAIL_USER, // ou session.customer_email pour le client
       subject: `Nouvelle réservation : ${logement}`,
       text: `Réservation confirmée pour ${logement}\nDate : ${date}\nNombre de nuits : ${nuits}\nEmail client : ${email}`
     };
