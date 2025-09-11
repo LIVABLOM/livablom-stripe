@@ -2,8 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const Stripe = require('stripe');
-const fetch = require('node-fetch');
-const ical = require('ical');
 const fs = require('fs');
 const nodemailer = require('nodemailer');
 
@@ -18,63 +16,25 @@ const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
 const isLocal = process.env.NODE_ENV !== 'production';
 const BASE_URL = isLocal ? `http://localhost:${PORT}` : 'https://livablom.fr';
 
-// ======== iCal ========
-const calendars = {
-  LIVA: [/* URLs iCal */],
-  BLOM: [/* URLs iCal */]
-};
+// ======== Middlewares ========
+// Ne pas parser le body JSON globalement avant le webhook
+app.use(cors());
+app.use(express.static('public'));
 
-async function fetchICal(url, logement) {
-  try {
-    const res = await fetch(url);
-    const data = await res.text();
-    const parsed = ical.parseICS(data);
-
-    return Object.values(parsed)
-      .filter(ev => ev.start && ev.end)
-      .map(ev => ({
-        summary: ev.summary || "Réservé",
-        start: ev.start,
-        end: ev.end,
-        logement
-      }));
-  } catch (err) {
-    console.error("Erreur iCal pour", url, err);
-    return [];
-  }
-}
-
-app.get("/api/reservations/:logement", async (req, res) => {
-  const logement = req.params.logement.toUpperCase();
-  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
-
-  try {
-    let events = [];
-    for (const url of calendars[logement]) {
-      events = events.concat(await fetchICal(url, logement));
-    }
-
-    const filePath = './reservations.json';
-    if (fs.existsSync(filePath)) {
-      const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      if (localReservations[logement]) events = events.concat(localReservations[logement]);
-    }
-
-    res.json(events);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Erreur serveur" });
-  }
+// Pour toutes les routes sauf webhook
+app.use((req, res, next) => {
+  if (req.originalUrl === '/webhook') return next();
+  express.json()(req, res, next);
 });
 
 // ======== Stripe Checkout ========
-app.post('/create-checkout-session', express.json(), async (req, res) => {
+app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
   if (!date || !logement || !nuits || !prix) return res.status(400).json({ error: 'Paramètres manquants' });
 
   try {
     let finalAmount = prix * 100;
-    if (process.env.TEST_PAYMENT === "true") finalAmount = 100; // 1 €
+    if (process.env.TEST_PAYMENT === "true") finalAmount = 100;
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -140,10 +100,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     // Envoi email
     const transporter = nodemailer.createTransport({
       service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
     });
 
     const mailOptions = {
@@ -161,11 +118,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
   res.json({ received: true });
 });
-
-// ======== Middlewares généraux ========
-app.use(cors());
-app.use(express.json());
-app.use(express.static('public'));
 
 // ======== Serveur ========
 app.listen(PORT, () => {
