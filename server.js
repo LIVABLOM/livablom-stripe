@@ -20,7 +20,7 @@ const BASE_URL = isLocal ? `http://localhost:${PORT}` : 'https://livablom.fr';
 
 // Middlewares
 app.use(cors());
-app.use(express.json());
+app.use(express.json()); // pour toutes les autres routes sauf /webhook
 app.use(express.static('public'));
 
 // ======== iCal ========
@@ -60,7 +60,6 @@ app.get("/api/reservations/:logement", async (req, res) => {
       events = events.concat(e);
     }
 
-    // Ajout des réservations locales
     const filePath = './reservations.json';
     if (fs.existsSync(filePath)) {
       const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -85,7 +84,6 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 
   try {
-    // --- switch TEST vs NORMAL ---
     let finalAmount = prix * 100;
     if (process.env.TEST_PAYMENT === "true") {
       finalAmount = 100; // 1 €
@@ -114,7 +112,7 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// ======== Stripe Webhook ========
+// ======== Stripe Webhook (corps brut) ========
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
 
@@ -132,7 +130,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
-    // ====== Mise à jour calendrier ======
+    // ====== Mise à jour calendrier local ======
     const filePath = './reservations.json';
     let reservations = {};
     if (fs.existsSync(filePath)) {
@@ -153,7 +151,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
     console.log("📅 Réservation enregistrée !");
 
-    // ====== Envoi Email à toi uniquement ======
+    // ====== Envoi Email à toi seulement ======
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -166,10 +164,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
       from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
       to: process.env.EMAIL_USER, // uniquement toi
       subject: `Nouvelle réservation : ${logement}`,
-      text: `Réservation confirmée pour ${logement}
-Date : ${date}
-Nombre de nuits : ${nuits}
-Email client : ${email}`
+      text: `Réservation confirmée pour ${logement}\nDate : ${date}\nNombre de nuits : ${nuits}\nEmail client : ${email}`
     };
 
     transporter.sendMail(mailOptions, (error, info) => {
