@@ -10,17 +10,25 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Stripe
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
+// Détection du mode
+const isProduction = process.env.NODE_ENV === 'production';
 
-// Détecter si on est en local ou prod
-const isLocal = process.env.NODE_ENV !== 'production';
-const BASE_URL = isLocal ? `http://localhost:${PORT}` : 'https://livablom.fr';
+// Stripe : choisir clé test ou production
+const stripe = Stripe(
+  isProduction ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_SECRET_KEY
+);
+
+// Webhook : clé correspondante
+const endpointSecret = isProduction
+  ? process.env.STRIPE_WEBHOOK_SECRET
+  : process.env.STRIPE_WEBHOOK_TEST_SECRET;
+
+// URL de base
+const BASE_URL = isProduction ? 'https://livablom.fr' : `http://localhost:${PORT}`;
 
 // Middlewares
 app.use(cors());
-// IMPORTANT pour Stripe Webhook : req.rawBody
+// Important : express.json() pour tout sauf webhook
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
 app.use(express.static('public'));
 
@@ -57,8 +65,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
   try {
     let events = [];
     for (const url of calendars[logement]) {
-      const e = await fetchICal(url, logement);
-      events = events.concat(e);
+      events = events.concat(await fetchICal(url, logement));
     }
 
     const filePath = './reservations.json';
@@ -77,14 +84,11 @@ app.get("/api/reservations/:logement", async (req, res) => {
 // ======== Stripe Checkout ========
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
-
-  if (!date || !logement || !nuits || !prix) {
-    return res.status(400).json({ error: 'Paramètres manquants' });
-  }
+  if (!date || !logement || !nuits || !prix) return res.status(400).json({ error: 'Paramètres manquants' });
 
   try {
     let finalAmount = prix * 100;
-    if (process.env.TEST_PAYMENT === "true") finalAmount = 100; // 1 €
+    if (!isProduction) finalAmount = 100; // 1€ en test
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -102,9 +106,7 @@ app.post('/create-checkout-session', async (req, res) => {
       metadata: { date, logement, nuits, email }
     });
 
-    // ENVOYER L'URL CORRECTE AU FRONT
     res.json({ url: session.url });
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Échec de la création de la session Stripe' });
@@ -117,7 +119,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   let event;
 
   try {
-    event = stripe.webhooks.constructEvent(req.rawBody, sig, endpointSecret);
+    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
   } catch (err) {
     console.error("⚠️ Erreur webhook :", err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
@@ -129,7 +131,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
-    // Mise à jour du calendrier local
+    // Blocage date local
     const filePath = './reservations.json';
     let reservations = {};
     if (fs.existsSync(filePath)) reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -148,10 +150,13 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
     console.log("📅 Réservation enregistrée !");
 
-    // Envoi Email
+    // Envoi email
     const transporter = nodemailer.createTransport({
       service: 'gmail',
-      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
     });
 
     const mailOptions = {
@@ -172,5 +177,5 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
 // ======== Serveur ========
 app.listen(PORT, () => {
-  console.log(`🚀 Serveur lancé sur ${BASE_URL}`);
+  console.log(`🚀 Serveur lancé sur ${BASE_URL} (${isProduction ? 'PROD' : 'TEST'})`);
 });
