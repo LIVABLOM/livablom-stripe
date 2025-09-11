@@ -132,6 +132,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
+    // ====== Mise à jour calendrier ======
     const filePath = './reservations.json';
     let reservations = {};
     if (fs.existsSync(filePath)) {
@@ -152,7 +153,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
     console.log("📅 Réservation enregistrée !");
 
-    // ====== Envoi Email ======
+    // ====== Envoi Email à toi uniquement ======
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -162,15 +163,14 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     });
 
     const mailOptions = {
-  from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
-  to: process.env.livablom59@gmail.com, // uniquement toi
-  subject: `Nouvelle réservation : ${logement}`,
-  text: `Réservation confirmée pour ${logement}
+      from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_USER, // uniquement toi
+      subject: `Nouvelle réservation : ${logement}`,
+      text: `Réservation confirmée pour ${logement}
 Date : ${date}
 Nombre de nuits : ${nuits}
 Email client : ${email}`
-};
-
+    };
 
     transporter.sendMail(mailOptions, (error, info) => {
       if (error) {
