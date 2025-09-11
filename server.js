@@ -10,24 +10,17 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ======= Détection environnement =======
+// Stripe
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
+
+// Détecter si on est en local ou prod
 const isLocal = process.env.NODE_ENV !== 'production';
 const BASE_URL = isLocal ? `http://localhost:${PORT}` : 'https://livablom.fr';
 
-// ======= Stripe =======
-const stripe = Stripe(
-  isLocal
-    ? process.env.STRIPE_SECRET_KEY_TEST
-    : process.env.STRIPE_SECRET_KEY_LIVE
-);
-
-const endpointSecret = isLocal
-  ? process.env.STRIPE_WEBHOOK_TEST_SECRET
-  : process.env.STRIPE_WEBHOOK_LIVE_SECRET;
-
-// ======= Middlewares =======
+// Middlewares
 app.use(cors());
-// IMPORTANT : raw pour webhook Stripe
+// IMPORTANT pour Stripe Webhook : req.rawBody
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
 app.use(express.static('public'));
 
@@ -42,6 +35,7 @@ async function fetchICal(url, logement) {
     const res = await fetch(url);
     const data = await res.text();
     const parsed = ical.parseICS(data);
+
     return Object.values(parsed)
       .filter(ev => ev.start && ev.end)
       .map(ev => ({
@@ -83,13 +77,14 @@ app.get("/api/reservations/:logement", async (req, res) => {
 // ======== Stripe Checkout ========
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
+
   if (!date || !logement || !nuits || !prix) {
     return res.status(400).json({ error: 'Paramètres manquants' });
   }
 
   try {
     let finalAmount = prix * 100;
-    if (process.env.TEST_PAYMENT === "true") finalAmount = 100; // 1€
+    if (process.env.TEST_PAYMENT === "true") finalAmount = 100; // 1 €
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -107,7 +102,9 @@ app.post('/create-checkout-session', async (req, res) => {
       metadata: { date, logement, nuits, email }
     });
 
+    // ENVOYER L'URL CORRECTE AU FRONT
     res.json({ url: session.url });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Échec de la création de la session Stripe' });
@@ -132,7 +129,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
-    // Mise à jour des réservations locales
+    // Mise à jour du calendrier local
     const filePath = './reservations.json';
     let reservations = {};
     if (fs.existsSync(filePath)) reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -151,13 +148,10 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
     console.log("📅 Réservation enregistrée !");
 
-    // Envoi email
+    // Envoi Email
     const transporter = nodemailer.createTransport({
       service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
     });
 
     const mailOptions = {
