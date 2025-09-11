@@ -18,10 +18,10 @@ const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
 const isLocal = process.env.NODE_ENV !== 'production';
 const BASE_URL = isLocal ? `http://localhost:${PORT}` : 'https://livablom.fr';
 
-// Middlewares globaux (sauf webhook)
+// Middlewares
 app.use(cors());
-app.use(express.json());
-app.use(express.static('public'));
+// IMPORTANT : ne pas utiliser express.json() globalement avant le webhook
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
 
 // ======== iCal ========
 const calendars = {
@@ -60,13 +60,10 @@ app.get("/api/reservations/:logement", async (req, res) => {
       events = events.concat(e);
     }
 
-    // Ajout des réservations locales
     const filePath = './reservations.json';
     if (fs.existsSync(filePath)) {
       const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      if (localReservations[logement]) {
-        events = events.concat(localReservations[logement]);
-      }
+      if (localReservations[logement]) events = events.concat(localReservations[logement]);
     }
 
     res.json(events);
@@ -85,11 +82,8 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 
   try {
-    // --- switch TEST vs NORMAL ---
     let finalAmount = prix * 100;
-    if (process.env.TEST_PAYMENT === "true") {
-      finalAmount = 100; // 1 €
-    }
+    if (process.env.TEST_PAYMENT === "true") finalAmount = 100;
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -115,11 +109,11 @@ app.post('/create-checkout-session', async (req, res) => {
 });
 
 // ======== Stripe Webhook ========
-// ⚠️ Important : express.raw({ type: 'application/json' }) pour ne pas parser JSON avant Stripe
-app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+// IMPORTANT : utiliser express.raw() pour Stripe
+app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
-
   let event;
+
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
   } catch (err) {
@@ -133,12 +127,10 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
-    // ======= Blocage date =======
+    // Mise à jour du calendrier local
     const filePath = './reservations.json';
     let reservations = {};
-    if (fs.existsSync(filePath)) {
-      reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    }
+    if (fs.existsSync(filePath)) reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     if (!reservations[logement]) reservations[logement] = [];
 
     const startDate = new Date(date);
@@ -154,7 +146,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
     console.log("📅 Réservation enregistrée !");
 
-    // ====== Envoi Email ======
+    // Envoi d'un email uniquement à toi
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -165,7 +157,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
     const mailOptions = {
       from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_USER, // envoi uniquement à toi
+      to: process.env.EMAIL_USER, // toi uniquement
       subject: `Nouvelle réservation : ${logement}`,
       text: `Réservation confirmée pour ${logement}\nDate : ${date}\nNombre de nuits : ${nuits}\nEmail client : ${email}`
     };
