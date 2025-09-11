@@ -10,20 +10,18 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// Stripe
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
+
 // Détecter si on est en local ou prod
 const isLocal = process.env.NODE_ENV !== 'production';
 const BASE_URL = isLocal ? `http://localhost:${PORT}` : 'https://livablom.fr';
 
-// Stripe
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-const endpointSecret = isLocal 
-  ? process.env.STRIPE_WEBHOOK_TEST_SECRET 
-  : process.env.STRIPE_WEBHOOK_SECRET;
-
 // Middlewares
 app.use(cors());
-// Important : ne pas utiliser express.json() globalement avant le webhook
-app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
+app.use(express.json());
+app.use(express.static('public'));
 
 // ======== iCal ========
 const calendars = {
@@ -62,10 +60,13 @@ app.get("/api/reservations/:logement", async (req, res) => {
       events = events.concat(e);
     }
 
+    // Ajout des réservations locales
     const filePath = './reservations.json';
     if (fs.existsSync(filePath)) {
       const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      if (localReservations[logement]) events = events.concat(localReservations[logement]);
+      if (localReservations[logement]) {
+        events = events.concat(localReservations[logement]);
+      }
     }
 
     res.json(events);
@@ -79,13 +80,16 @@ app.get("/api/reservations/:logement", async (req, res) => {
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
 
-  if (!date || !logement || !nuits || !prix || !email) {
+  if (!date || !logement || !nuits || !prix) {
     return res.status(400).json({ error: 'Paramètres manquants' });
   }
 
   try {
+    // --- switch TEST vs NORMAL ---
     let finalAmount = prix * 100;
-    if (process.env.TEST_PAYMENT === "true") finalAmount = 100;
+    if (process.env.TEST_PAYMENT === "true") {
+      finalAmount = 100; // 1 €
+    }
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -113,8 +117,8 @@ app.post('/create-checkout-session', async (req, res) => {
 // ======== Stripe Webhook ========
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
-  let event;
 
+  let event;
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
   } catch (err) {
@@ -128,10 +132,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
-    // Mise à jour du calendrier local
     const filePath = './reservations.json';
     let reservations = {};
-    if (fs.existsSync(filePath)) reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    if (fs.existsSync(filePath)) {
+      reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    }
     if (!reservations[logement]) reservations[logement] = [];
 
     const startDate = new Date(date);
@@ -147,7 +152,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
     console.log("📅 Réservation enregistrée !");
 
-    // Envoi d'un email à toi (ou au client si tu veux)
+    // ====== Envoi Email ======
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -158,14 +163,16 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     const mailOptions = {
       from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_USER, // ou session.customer_email pour le client
+      to: process.env.EMAIL_USER, // toi
       subject: `Nouvelle réservation : ${logement}`,
       text: `Réservation confirmée pour ${logement}\nDate : ${date}\nNombre de nuits : ${nuits}\nEmail client : ${email}`
     };
 
     transporter.sendMail(mailOptions, (error, info) => {
-      if (error) console.error("❌ Erreur envoi email :", error);
-      else console.log("📧 Email envoyé :", info.response);
+      if (error) {
+        return console.error("❌ Erreur envoi email :", error);
+      }
+      console.log("📧 Email envoyé :", info.response);
     });
   }
 
