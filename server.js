@@ -1,9 +1,9 @@
-import express from "express";
-import Stripe from "stripe";
-import bodyParser from "body-parser";
-import dotenv from "dotenv";
-
-dotenv.config();
+require('dotenv').config();
+const express = require('express');
+const Stripe = require('stripe');
+const bodyParser = require('body-parser');
+const fs = require('fs');
+const nodemailer = require('nodemailer');
 
 const app = express();
 
@@ -13,8 +13,8 @@ console.log("🌍 Environnement :", isProduction ? "production" : "développemen
 
 // === Initialisation de Stripe avec la bonne clé ===
 const stripeSecretKey = isProduction
-  ? process.env.STRIPE_SECRET_KEY        // clé live
-  : process.env.STRIPE_TEST_KEY;         // clé test
+  ? process.env.STRIPE_SECRET_KEY
+  : process.env.STRIPE_TEST_KEY;
 
 if (!stripeSecretKey) {
   console.error("❌ ERREUR : aucune clé Stripe trouvée !");
@@ -22,7 +22,7 @@ if (!stripeSecretKey) {
   console.log("🔑 Clé Stripe utilisée :", stripeSecretKey.startsWith("sk_live_") ? "LIVE ✅" : "TEST 🧪");
 }
 
-const stripe = new Stripe(stripeSecretKey);
+const stripe = Stripe(stripeSecretKey);
 
 // === Middleware ===
 app.use(bodyParser.json());
@@ -56,29 +56,24 @@ app.post("/create-checkout-session", async (req, res) => {
 });
 
 // === Route webhook Stripe ===
-app.post(
-  "/webhook",
-  bodyParser.raw({ type: "application/json" }),
-  (req, res) => {
-    const sig = req.headers["stripe-signature"];
+app.post("/webhook", bodyParser.raw({ type: "application/json" }), (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  const webhookSecret = isProduction
+    ? process.env.STRIPE_WEBHOOK_SECRET
+    : process.env.STRIPE_WEBHOOK_TEST_SECRET;
 
-    const webhookSecret = isProduction
-      ? process.env.STRIPE_WEBHOOK_SECRET
-      : process.env.STRIPE_WEBHOOK_TEST_SECRET;
+  let event;
 
-    let event;
-
-    try {
-      event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
-    } catch (err) {
-      console.error("❌ Erreur Webhook :", err.message);
-      return res.sendStatus(400);
-    }
-
-    console.log("✅ Événement Stripe reçu :", event.type);
-    res.json({ received: true });
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+  } catch (err) {
+    console.error("❌ Erreur Webhook :", err.message);
+    return res.sendStatus(400);
   }
-);
+
+  console.log("✅ Événement Stripe reçu :", event.type);
+  res.json({ received: true });
+});
 
 // === Lancement serveur ===
 const PORT = process.env.PORT || 8080;
