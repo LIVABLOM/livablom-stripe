@@ -1,8 +1,7 @@
-import express from "express";
-import Stripe from "stripe";
-import bodyParser from "body-parser";
-import path from "path";
-import { fileURLToPath } from "url";
+const express = require("express");
+const Stripe = require("stripe");
+const bodyParser = require("body-parser");
+const path = require("path");
 
 const app = express();
 
@@ -20,23 +19,19 @@ console.log(
 
 const stripe = Stripe(stripeKey);
 
-// === Config chemins ===
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Middleware classique pour tout sauf /webhook
+// === Middleware classique pour tout sauf /webhook ===
 app.use((req, res, next) => {
   if (req.originalUrl === "/webhook") {
-    next(); // on laisse express.raw() gérer ça plus bas
+    next();
   } else {
     bodyParser.json()(req, res, next);
   }
 });
 
-// === Route pour créer une session de paiement ===
+// === Route paiement ===
 app.post("/create-checkout-session", async (req, res) => {
   try {
-    console.log("📩 Requête reçue sur /create-checkout-session :", req.body);
+    console.log("📩 Requête reçue :", req.body);
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -45,7 +40,7 @@ app.post("/create-checkout-session", async (req, res) => {
           price_data: {
             currency: "eur",
             product_data: { name: "Réservation LIVABLŌM" },
-            unit_amount: 5000, // 50,00 €
+            unit_amount: 5000,
           },
           quantity: 1,
         },
@@ -63,7 +58,7 @@ app.post("/create-checkout-session", async (req, res) => {
   }
 });
 
-// === Webhook Stripe (nécessite express.raw) ===
+// === Webhook Stripe ===
 app.post(
   "/webhook",
   bodyParser.raw({ type: "application/json" }),
@@ -83,7 +78,7 @@ app.post(
 
       if (event.type === "checkout.session.completed") {
         const session = event.data.object;
-        console.log("💰 Paiement confirmé pour la session :", session.id);
+        console.log("💰 Paiement confirmé :", session.id);
       }
 
       res.json({ received: true });
@@ -94,7 +89,7 @@ app.post(
   }
 );
 
-// === Servir les fichiers statiques (confirmation.html inclus) ===
+// === Fichiers statiques ===
 app.use(express.static(path.join(__dirname, "public")));
 
 // === Lancer le serveur ===
