@@ -2,50 +2,101 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const Stripe = require('stripe');
+const fetch = require('node-fetch');
+const ical = require('ical');
 const fs = require('fs');
 const nodemailer = require('nodemailer');
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 4000;
 
-// ======== CORS ========
-const allowedOrigins = ['https://livablom.fr', 'http://localhost:3000'];
-app.use(cors({
-  origin: function(origin, callback){
-    if(!origin) return callback(null, true); // allow non-browser requests
-    if(allowedOrigins.indexOf(origin) === -1){
-      const msg = 'CORS policy : origine non autorisée';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  methods: ['GET','POST','OPTIONS'],
-  credentials: true,
-}));
+// ======== Gestion des clés Stripe selon NODE_ENV ========
+const isProduction = process.env.NODE_ENV === 'production';
+
+const stripeSecretKey = isProduction
+  ? process.env.STRIPE_SECRET_KEY      // production
+  : process.env.STRIPE_TEST_KEY        // test
+
+const stripeWebhookSecret = isProduction
+  ? process.env.STRIPE_WEBHOOK_SECRET  // production
+  : process.env.STRIPE_WEBHOOK_TEST_SECRET // test
+
+const stripe = Stripe(stripeSecretKey);
+
+console.log(`🌍 Environnement : ${process.env.NODE_ENV}`);
+console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? '✅ OK' : '❌ NON DEFINIE'}`);
 
 // ======== Middlewares ========
+app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// ======== Stripe ========
-const isLocal = process.env.NODE_ENV !== 'production';
-const stripeKey = isLocal ? process.env.STRIPE_TEST_KEY : process.env.STRIPE_SECRET_KEY;
-const stripe = Stripe(stripeKey);
-const webhookSecret = isLocal ? process.env.STRIPE_WEBHOOK_TEST_SECRET : process.env.STRIPE_WEBHOOK_SECRET;
+// ======== iCal ========
+const calendars = {
+  LIVA: [],
+  BLOM: []
+};
 
-console.log('🌍 Environnement :', process.env.NODE_ENV);
-console.log('🔑 Clé Stripe utilisée :', stripeKey ? '✅ DEFINIE' : '❌ NON DEFINIE');
+async function fetchICal(url, logement) {
+  try {
+    const res = await fetch(url);
+    const data = await res.text();
+    const parsed = ical.parseICS(data);
 
-// ======== Création de session Stripe ========
+    return Object.values(parsed)
+      .filter(ev => ev.start && ev.end)
+      .map(ev => ({
+        summary: ev.summary || "Réservé",
+        start: ev.start,
+        end: ev.end,
+        logement
+      }));
+  } catch (err) {
+    console.error("Erreur iCal pour", url, err);
+    return [];
+  }
+}
+
+app.get("/api/reservations/:logement", async (req, res) => {
+  const logement = req.params.logement.toUpperCase();
+  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
+
+  try {
+    let events = [];
+    for (const url of calendars[logement]) {
+      const e = await fetchICal(url, logement);
+      events = events.concat(e);
+    }
+
+    // Ajout des réservations locales
+    const filePath = './reservations.json';
+    if (fs.existsSync(filePath)) {
+      const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      if (localReservations[logement]) events = events.concat(localReservations[logement]);
+    }
+
+    res.json(events);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// ======== Stripe Checkout ========
+const BASE_URL = isProduction ? 'https://livablom.fr' : `http://localhost:${PORT}`;
+
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
+
   if (!date || !logement || !nuits || !prix) {
     return res.status(400).json({ error: 'Paramètres manquants' });
   }
 
   try {
     let finalAmount = prix * 100;
-    if (process.env.TEST_PAYMENT === "true") finalAmount = 100; // 1€
+    if (process.env.TEST_PAYMENT === "true" && !isProduction) {
+      finalAmount = 100; // 1 € pour test
+    }
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -58,27 +109,27 @@ app.post('/create-checkout-session', async (req, res) => {
         quantity: 1,
       }],
       mode: 'payment',
-      success_url: `${req.protocol}://${req.get('host')}/confirmation.html?success=true`,
-      cancel_url: `${req.protocol}://${req.get('host')}/blom/`,
+      success_url: `${BASE_URL}/confirmation.html?success=true`,
+      cancel_url: `${BASE_URL}/blom/`,
       metadata: { date, logement, nuits, email }
     });
 
     res.json({ url: session.url });
   } catch (err) {
-    console.error('❌ Erreur Stripe Checkout :', err.message);
-    res.status(500).json({ error: 'Erreur lors de la création de la session Stripe' });
+    console.error("❌ Erreur Stripe Checkout :", err);
+    res.status(500).json({ error: 'Erreur lors de la réservation.' });
   }
 });
 
-// ======== Webhook Stripe ========
+// ======== Stripe Webhook ========
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
-  let event;
 
+  let event;
   try {
-    event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+    event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
   } catch (err) {
-    console.error('⚠️ Erreur webhook :', err.message);
+    console.error("⚠️ Erreur webhook :", err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
@@ -88,7 +139,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
-    // --- Enregistrer réservation ---
+    // Enregistrement réservation
     const filePath = './reservations.json';
     let reservations = {};
     if (fs.existsSync(filePath)) reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -107,7 +158,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
     console.log("📅 Réservation enregistrée !");
 
-    // --- Envoyer email ---
+    // Envoi email
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
@@ -121,15 +172,15 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     };
 
     transporter.sendMail(mailOptions, (error, info) => {
-      if (error) return console.error("❌ Erreur envoi email :", error);
-      console.log("📧 Email envoyé :", info.response);
+      if (error) console.error("❌ Erreur envoi email :", error);
+      else console.log("📧 Email envoyé :", info.response);
     });
   }
 
   res.json({ received: true });
 });
 
-// ======== Lancer serveur ========
+// ======== Serveur ========
 app.listen(PORT, () => {
-  console.log(`🚀 Serveur lancé sur port ${PORT}`);
+  console.log(`🚀 Serveur lancé sur ${BASE_URL}`);
 });
