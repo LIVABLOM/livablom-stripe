@@ -10,33 +10,114 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ======== Gestion des clés Stripe selon NODE_ENV ========
-const isProduction = process.env.NODE_ENV === 'production';
+// ======== Détection de l'environnement ========
+const isProduction = (process.env.NODE_ENV || 'development') === 'production';
 
 const stripeSecretKey = isProduction
-  ? process.env.STRIPE_SECRET_KEY      // production
-  : process.env.STRIPE_TEST_KEY;       // test
+  ? process.env.STRIPE_SECRET_KEY
+  : process.env.STRIPE_TEST_KEY;
 
 const stripeWebhookSecret = isProduction
-  ? process.env.STRIPE_WEBHOOK_SECRET  // production
-  : process.env.STRIPE_WEBHOOK_TEST_SECRET; // test
+  ? process.env.STRIPE_WEBHOOK_SECRET
+  : process.env.STRIPE_WEBHOOK_TEST_SECRET;
 
 const stripe = Stripe(stripeSecretKey);
 
-console.log(`🌍 Environnement : ${process.env.NODE_ENV}`);
+console.log(`🌍 Environnement : ${process.env.NODE_ENV || 'development'}`);
 console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? '✅ OK' : '❌ NON DEFINIE'}`);
 
-// ======== Middlewares généraux ========
+// ======== Middlewares ========
 app.use(cors());
+app.use(express.json());
 app.use(express.static('public'));
 
-// ⚠️ NE PAS mettre express.json() ici, sinon il casse le raw body du webhook
+// ======== iCal ========
+const calendars = { LIVA: [], BLOM: [] };
 
-// ======== Stripe Webhook (raw body obligatoire) ========
+async function fetchICal(url, logement) {
+  try {
+    const res = await fetch(url);
+    const data = await res.text();
+    const parsed = ical.parseICS(data);
+    return Object.values(parsed)
+      .filter(ev => ev.start && ev.end)
+      .map(ev => ({
+        summary: ev.summary || "Réservé",
+        start: ev.start,
+        end: ev.end,
+        logement
+      }));
+  } catch (err) {
+    console.error("Erreur iCal pour", url, err);
+    return [];
+  }
+}
+
+app.get("/api/reservations/:logement", async (req, res) => {
+  const logement = req.params.logement.toUpperCase();
+  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
+
+  try {
+    let events = [];
+    for (const url of calendars[logement]) {
+      const e = await fetchICal(url, logement);
+      events = events.concat(e);
+    }
+
+    // Ajout des réservations locales
+    const filePath = './reservations.json';
+    if (fs.existsSync(filePath)) {
+      const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      if (localReservations[logement]) events = events.concat(localReservations[logement]);
+    }
+
+    res.json(events);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// ======== Stripe Checkout ========
+const BASE_URL = isProduction ? 'https://livablom.fr' : `http://localhost:${PORT}`;
+
+app.post('/create-checkout-session', async (req, res) => {
+  const { date, logement, nuits, prix, email } = req.body;
+  if (!date || !logement || !nuits || !prix) return res.status(400).json({ error: 'Paramètres manquants' });
+
+  try {
+    let finalAmount = prix * 100;
+    if (process.env.TEST_PAYMENT === "true" && !isProduction) finalAmount = 100; // 1€ pour test
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency: 'eur',
+          product_data: { name: `${logement} - ${nuits} nuit(s)` },
+          unit_amount: finalAmount,
+        },
+        quantity: 1,
+      }],
+      mode: 'payment',
+      success_url: `${BASE_URL}/confirmation.html?success=true`,
+      cancel_url: `${BASE_URL}/blom/`,
+      metadata: { date, logement, nuits, email }
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("❌ Erreur Stripe Checkout :", err);
+    res.status(500).json({ error: 'Erreur lors de la réservation.' });
+  }
+});
+
+// ======== Stripe Webhook ========
+// ⚠️ Important : express.raw() pour que Stripe puisse vérifier la signature
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
-
   let event;
+
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
   } catch (err) {
@@ -89,96 +170,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   }
 
   res.json({ received: true });
-});
-
-// ======== Middleware JSON pour toutes les autres routes ========
-app.use(express.json());
-
-// ======== iCal ========
-const calendars = { LIVA: [], BLOM: [] };
-
-async function fetchICal(url, logement) {
-  try {
-    const res = await fetch(url);
-    const data = await res.text();
-    const parsed = ical.parseICS(data);
-
-    return Object.values(parsed)
-      .filter(ev => ev.start && ev.end)
-      .map(ev => ({
-        summary: ev.summary || "Réservé",
-        start: ev.start,
-        end: ev.end,
-        logement
-      }));
-  } catch (err) {
-    console.error("Erreur iCal pour", url, err);
-    return [];
-  }
-}
-
-app.get("/api/reservations/:logement", async (req, res) => {
-  const logement = req.params.logement.toUpperCase();
-  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
-
-  try {
-    let events = [];
-    for (const url of calendars[logement]) {
-      const e = await fetchICal(url, logement);
-      events = events.concat(e);
-    }
-
-    // Ajout des réservations locales
-    const filePath = './reservations.json';
-    if (fs.existsSync(filePath)) {
-      const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      if (localReservations[logement]) events = events.concat(localReservations[logement]);
-    }
-
-    res.json(events);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Erreur serveur" });
-  }
-});
-
-// ======== Stripe Checkout ========
-const BASE_URL = isProduction ? 'https://livablom.fr' : `http://localhost:${PORT}`;
-
-app.post('/create-checkout-session', async (req, res) => {
-  const { date, logement, nuits, prix, email } = req.body;
-
-  if (!date || !logement || !nuits || !prix) {
-    return res.status(400).json({ error: 'Paramètres manquants' });
-  }
-
-  try {
-    let finalAmount = prix * 100;
-    if (process.env.TEST_PAYMENT === "true" && !isProduction) {
-      finalAmount = 100; // 1 € pour test
-    }
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      line_items: [{
-        price_data: {
-          currency: 'eur',
-          product_data: { name: `${logement} - ${nuits} nuit(s)` },
-          unit_amount: finalAmount,
-        },
-        quantity: 1,
-      }],
-      mode: 'payment',
-      success_url: `${BASE_URL}/confirmation.html?success=true`,
-      cancel_url: `${BASE_URL}/blom/`,
-      metadata: { date, logement, nuits, email }
-    });
-
-    res.json({ url: session.url });
-  } catch (err) {
-    console.error("❌ Erreur Stripe Checkout :", err);
-    res.status(500).json({ error: 'Erreur lors de la réservation.' });
-  }
 });
 
 // ======== Serveur ========
