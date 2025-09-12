@@ -114,6 +114,15 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
+// === Gestion des clés Stripe selon l'environnement ===
+const isLocal = process.env.NODE_ENV !== 'production';
+const stripeKey = isLocal ? process.env.STRIPE_TEST_SECRET_KEY : process.env.STRIPE_SECRET_KEY;
+
+console.log("🔑 Stripe KEY utilisée :", stripeKey ? stripeKey.slice(0, 8) + "..." : "❌ NON DEFINIE");
+
+const stripe = Stripe(stripeKey);
+
+
 // === Stripe Webhook ===
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
