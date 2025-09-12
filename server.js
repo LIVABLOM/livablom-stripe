@@ -15,27 +15,87 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 const stripeSecretKey = isProduction
   ? process.env.STRIPE_SECRET_KEY      // production
-  : process.env.STRIPE_TEST_KEY        // test
+  : process.env.STRIPE_TEST_KEY;       // test
 
 const stripeWebhookSecret = isProduction
   ? process.env.STRIPE_WEBHOOK_SECRET  // production
-  : process.env.STRIPE_WEBHOOK_TEST_SECRET // test
+  : process.env.STRIPE_WEBHOOK_TEST_SECRET; // test
 
 const stripe = Stripe(stripeSecretKey);
 
 console.log(`🌍 Environnement : ${process.env.NODE_ENV}`);
 console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? '✅ OK' : '❌ NON DEFINIE'}`);
 
-// ======== Middlewares ========
+// ======== Middlewares généraux ========
 app.use(cors());
-app.use(express.json());
 app.use(express.static('public'));
 
+// ⚠️ NE PAS mettre express.json() ici, sinon il casse le raw body du webhook
+
+// ======== Stripe Webhook (raw body obligatoire) ========
+app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+  const sig = req.headers['stripe-signature'];
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
+  } catch (err) {
+    console.error("⚠️ Erreur webhook :", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const { date, logement, nuits, email } = session.metadata;
+
+    console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
+
+    // Enregistrement réservation
+    const filePath = './reservations.json';
+    let reservations = {};
+    if (fs.existsSync(filePath)) reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    if (!reservations[logement]) reservations[logement] = [];
+
+    const startDate = new Date(date);
+    const endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + parseInt(nuits));
+
+    reservations[logement].push({
+      title: `Réservé (${email})`,
+      start: startDate.toISOString().split('T')[0],
+      end: endDate.toISOString().split('T')[0]
+    });
+
+    fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
+    console.log("📅 Réservation enregistrée !");
+
+    // Envoi email
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+    });
+
+    const mailOptions = {
+      from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_USER,
+      subject: `Nouvelle réservation : ${logement}`,
+      text: `Réservation confirmée pour ${logement}\nDate : ${date}\nNombre de nuits : ${nuits}\nEmail client : ${email}`
+    };
+
+    transporter.sendMail(mailOptions, (error, info) => {
+      if (error) console.error("❌ Erreur envoi email :", error);
+      else console.log("📧 Email envoyé :", info.response);
+    });
+  }
+
+  res.json({ received: true });
+});
+
+// ======== Middleware JSON pour toutes les autres routes ========
+app.use(express.json());
+
 // ======== iCal ========
-const calendars = {
-  LIVA: [],
-  BLOM: []
-};
+const calendars = { LIVA: [], BLOM: [] };
 
 async function fetchICal(url, logement) {
   try {
@@ -119,65 +179,6 @@ app.post('/create-checkout-session', async (req, res) => {
     console.error("❌ Erreur Stripe Checkout :", err);
     res.status(500).json({ error: 'Erreur lors de la réservation.' });
   }
-});
-
-// ======== Stripe Webhook ========
-app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
-  const sig = req.headers['stripe-signature'];
-
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
-  } catch (err) {
-    console.error("⚠️ Erreur webhook :", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-    const { date, logement, nuits, email } = session.metadata;
-
-    console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
-
-    // Enregistrement réservation
-    const filePath = './reservations.json';
-    let reservations = {};
-    if (fs.existsSync(filePath)) reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    if (!reservations[logement]) reservations[logement] = [];
-
-    const startDate = new Date(date);
-    const endDate = new Date(startDate);
-    endDate.setDate(startDate.getDate() + parseInt(nuits));
-
-    reservations[logement].push({
-      title: `Réservé (${email})`,
-      start: startDate.toISOString().split('T')[0],
-      end: endDate.toISOString().split('T')[0]
-    });
-
-    fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
-    console.log("📅 Réservation enregistrée !");
-
-    // Envoi email
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-    });
-
-    const mailOptions = {
-      from: `"LIVABLŌM" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_USER,
-      subject: `Nouvelle réservation : ${logement}`,
-      text: `Réservation confirmée pour ${logement}\nDate : ${date}\nNombre de nuits : ${nuits}\nEmail client : ${email}`
-    };
-
-    transporter.sendMail(mailOptions, (error, info) => {
-      if (error) console.error("❌ Erreur envoi email :", error);
-      else console.log("📧 Email envoyé :", info.response);
-    });
-  }
-
-  res.json({ received: true });
 });
 
 // ======== Serveur ========
