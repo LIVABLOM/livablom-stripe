@@ -3,8 +3,7 @@
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
-    "start": "NODE_ENV=production node server.js",
-    "dev": "NODE_ENV=development nodemon server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "body-parser": "^1.20.2",
@@ -15,9 +14,6 @@
     "node-fetch": "^2.7.0",
     "nodemailer": "^7.0.6",
     "stripe": "^12.18.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.2"
   },
   "description": "",
   "keywords": [],
