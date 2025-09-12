@@ -1,23 +1,23 @@
 const express = require('express');
 const cors = require('cors');
-const Stripe = require('stripe');
 const path = require('path');
 require('dotenv').config();
 
 const app = express();
 
-// ⚠️ Webhook doit être défini **avant** tout middleware global
+// ⚠️ Webhook avant tout middleware
 const webhookRouter = require('./routes/webhook');
 app.use('/webhook', webhookRouter);
 
-// Middleware global (CORS, JSON)
+// Middleware global
 app.use(cors());
 app.use(express.json());
 
-// Choix de la clé Stripe selon NODE_ENV
+// Stripe selon environnement
+const Stripe = require('stripe');
 const stripe = Stripe(process.env.NODE_ENV !== 'production' ? process.env.STRIPE_TEST_KEY : process.env.STRIPE_SECRET_KEY);
 
-// Endpoint pour créer la session de paiement
+// Endpoint pour créer session de paiement
 app.post('/create-checkout-session', async (req, res) => {
   try {
     const { amount, email, date } = req.body;
@@ -30,10 +30,8 @@ app.post('/create-checkout-session', async (req, res) => {
         {
           price_data: {
             currency: 'eur',
-            product_data: {
-              name: `Réservation BLOM - ${date}`,
-            },
-            unit_amount: amount * 100, // en centimes
+            product_data: { name: `Réservation BLOM - ${date}` },
+            unit_amount: amount * 100,
           },
           quantity: 1,
         },
