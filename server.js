@@ -10,33 +10,38 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ======== Gestion des clés Stripe selon NODE_ENV ========
+// ======== Gestion des modes ========
 const isProduction = process.env.NODE_ENV === 'production';
+const isTestPayment = process.env.TEST_PAYMENT === "true";
 
-const stripeSecretKey = isProduction
-  ? process.env.STRIPE_SECRET_KEY      // production
-  : process.env.STRIPE_TEST_KEY;       // test
+// ======== Gestion des clés Stripe ========
+const stripeSecretKey = !isProduction
+  ? process.env.STRIPE_TEST_KEY         // mode test Stripe (cartes virtuelles)
+  : isTestPayment
+    ? process.env.STRIPE_SECRET_KEY     // production + paiement 1 €
+    : process.env.STRIPE_SECRET_KEY;    // production normale
 
-const stripeWebhookSecret = isProduction
-  ? process.env.STRIPE_WEBHOOK_SECRET  // production
-  : process.env.STRIPE_WEBHOOK_TEST_SECRET; // test
+const stripeWebhookSecret = !isProduction
+  ? process.env.STRIPE_WEBHOOK_TEST_SECRET
+  : isTestPayment
+    ? process.env.STRIPE_WEBHOOK_SECRET
+    : process.env.STRIPE_WEBHOOK_SECRET;
 
 const stripe = Stripe(stripeSecretKey);
 
 console.log(`🌍 Environnement : ${process.env.NODE_ENV}`);
+console.log(`💳 Mode TEST_PAYMENT : ${isTestPayment}`);
 console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? '✅ OK' : '❌ NON DEFINIE'}`);
 
-// ======== Middlewares généraux ========
+// ======== Middlewares ========
 app.use(cors());
 app.use(express.static('public'));
 
-// ⚠️ NE PAS mettre express.json() ici, sinon il casse le raw body du webhook
-
-// ======== Stripe Webhook (raw body obligatoire) ========
+// ⚠️ Ne pas mettre express.json() avant le webhook pour conserver le raw body
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
-
   let event;
+
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
   } catch (err) {
@@ -91,12 +96,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   res.json({ received: true });
 });
 
-// ======== Middleware JSON pour toutes les autres routes ========
+// ======== Middleware JSON pour les autres routes ========
 app.use(express.json());
 
 // ======== iCal ========
 const calendars = { LIVA: [], BLOM: [] };
-
 async function fetchICal(url, logement) {
   try {
     const res = await fetch(url);
@@ -128,7 +132,6 @@ app.get("/api/reservations/:logement", async (req, res) => {
       events = events.concat(e);
     }
 
-    // Ajout des réservations locales
     const filePath = './reservations.json';
     if (fs.existsSync(filePath)) {
       const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -147,18 +150,13 @@ const BASE_URL = isProduction ? 'https://livablom.fr' : `http://localhost:${PORT
 
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
-
-  if (!date || !logement || !nuits || !prix) {
-    return res.status(400).json({ error: 'Paramètres manquants' });
-  }
+  if (!date || !logement || !nuits || !prix) return res.status(400).json({ error: 'Paramètres manquants' });
 
   try {
     let finalAmount = prix * 100;
 
-    // ⚡ Forcer le paiement à 1 € si TEST_PAYMENT=true (prioritaire sur tout)
-    if (process.env.TEST_PAYMENT === "true") {
-      finalAmount = 100;
-    }
+    // Paiement 1 € réel pour test rapide
+    if (isTestPayment && isProduction) finalAmount = 100;
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
