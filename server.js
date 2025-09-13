@@ -10,36 +10,124 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ======== Gestion des clés Stripe ========
-const stripeMode = process.env.STRIPE_MODE || "live"; // "test" ou "live"
-const isTestMode = stripeMode === "test";
-const isForceOneEuro = process.env.TEST_PAYMENT === "true";
+// ======== Gestion des clés Stripe selon les variables d'environnement ========
+const isProduction = process.env.NODE_ENV === 'production';
+const isStripeLive = process.env.STRIPE_MODE === 'live';
 
-const stripeSecretKey = isTestMode
-  ? process.env.STRIPE_TEST_KEY
-  : process.env.STRIPE_SECRET_KEY;
+const stripeSecretKey = isStripeLive
+  ? process.env.STRIPE_SECRET_KEY      // clé live
+  : process.env.STRIPE_TEST_KEY;       // clé test
 
-const stripeWebhookSecret = isTestMode
-  ? process.env.STRIPE_WEBHOOK_TEST_SECRET
-  : process.env.STRIPE_WEBHOOK_SECRET;
+const stripeWebhookSecret = isStripeLive
+  ? process.env.STRIPE_WEBHOOK_SECRET  // webhook live
+  : process.env.STRIPE_WEBHOOK_TEST_SECRET; // webhook test
 
 const stripe = Stripe(stripeSecretKey);
 
-console.log(`🌍 Environnement Node : ${process.env.NODE_ENV}`);
-console.log(`💳 Stripe Mode : ${isTestMode ? "TEST (cartes virtuelles)" : "LIVE (paiements réels)"}`);
-console.log(`💶 Paiement forcé à 1 € : ${isForceOneEuro ? "✅ Oui" : "❌ Non"}`);
-console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? "✅ OK" : "❌ NON DEFINIE"}`);
+console.log(`🌍 NODE_ENV : ${process.env.NODE_ENV}`);
+console.log(`💳 STRIPE_MODE : ${process.env.STRIPE_MODE}`);
+console.log(`💳 Mode TEST_PAYMENT : ${process.env.TEST_PAYMENT}`);
+console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? '✅ OK' : '❌ NON DEFINIE'}`);
 
 // ======== Middlewares ========
 app.use(cors());
 app.use(express.static('public'));
 
-// ⚠️ express.json() doit être après le webhook pour préserver le raw body
+// ⚠️ Attention : express.json() doit être après le webhook pour ne pas casser le raw body
+app.use(express.json());
+
+// ======== iCal ========
+const calendars = { LIVA: [], BLOM: [] };
+
+async function fetchICal(url, logement) {
+  try {
+    const res = await fetch(url);
+    const data = await res.text();
+    const parsed = ical.parseICS(data);
+    return Object.values(parsed)
+      .filter(ev => ev.start && ev.end)
+      .map(ev => ({
+        summary: ev.summary || "Réservé",
+        start: ev.start,
+        end: ev.end,
+        logement
+      }));
+  } catch (err) {
+    console.error("Erreur iCal pour", url, err);
+    return [];
+  }
+}
+
+app.get("/api/reservations/:logement", async (req, res) => {
+  const logement = req.params.logement.toUpperCase();
+  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
+
+  try {
+    let events = [];
+    for (const url of calendars[logement]) {
+      const e = await fetchICal(url, logement);
+      events = events.concat(e);
+    }
+
+    const filePath = './reservations.json';
+    if (fs.existsSync(filePath)) {
+      const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      if (localReservations[logement]) events = events.concat(localReservations[logement]);
+    }
+
+    res.json(events);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// ======== Stripe Checkout ========
+const BASE_URL = isProduction ? 'https://livablom.fr' : `http://localhost:${PORT}`;
+
+app.post('/create-checkout-session', async (req, res) => {
+  const { date, logement, nuits, prix, email } = req.body;
+
+  if (!date || !logement || !nuits || !prix) {
+    return res.status(400).json({ error: 'Paramètres manquants' });
+  }
+
+  try {
+    let finalAmount = prix * 100;
+
+    // Test payment à 1€ si demandé et que Stripe n'est pas en live
+    if (process.env.TEST_PAYMENT === "true" && !isStripeLive) {
+      finalAmount = 100; // 1€
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency: 'eur',
+          product_data: { name: `${logement} - ${nuits} nuit(s)` },
+          unit_amount: finalAmount,
+        },
+        quantity: 1,
+      }],
+      mode: 'payment',
+      success_url: `${BASE_URL}/confirmation.html?success=true`,
+      cancel_url: `${BASE_URL}/blom/`,
+      metadata: { date, logement, nuits, email }
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("❌ Erreur Stripe Checkout :", err);
+    res.status(500).json({ error: 'Erreur lors de la réservation.' });
+  }
+});
+
 // ======== Stripe Webhook ========
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
-
   let event;
+
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
   } catch (err) {
@@ -92,96 +180,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   }
 
   res.json({ received: true });
-});
-
-// ======== Middleware JSON ========
-app.use(express.json());
-
-// ======== iCal ========
-const calendars = { LIVA: [], BLOM: [] };
-
-async function fetchICal(url, logement) {
-  try {
-    const res = await fetch(url);
-    const data = await res.text();
-    const parsed = ical.parseICS(data);
-
-    return Object.values(parsed)
-      .filter(ev => ev.start && ev.end)
-      .map(ev => ({
-        summary: ev.summary || "Réservé",
-        start: ev.start,
-        end: ev.end,
-        logement
-      }));
-  } catch (err) {
-    console.error("Erreur iCal pour", url, err);
-    return [];
-  }
-}
-
-app.get("/api/reservations/:logement", async (req, res) => {
-  const logement = req.params.logement.toUpperCase();
-  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
-
-  try {
-    let events = [];
-    for (const url of calendars[logement]) {
-      const e = await fetchICal(url, logement);
-      events = events.concat(e);
-    }
-
-    // Ajout des réservations locales
-    const filePath = './reservations.json';
-    if (fs.existsSync(filePath)) {
-      const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      if (localReservations[logement]) events = events.concat(localReservations[logement]);
-    }
-
-    res.json(events);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Erreur serveur" });
-  }
-});
-
-// ======== Stripe Checkout ========
-const BASE_URL = isTestMode ? `http://localhost:${PORT}` : 'https://livablom.fr';
-
-app.post('/create-checkout-session', async (req, res) => {
-  const { date, logement, nuits, prix, email } = req.body;
-
-  if (!date || !logement || !nuits || !prix) {
-    return res.status(400).json({ error: 'Paramètres manquants' });
-  }
-
-  try {
-    let finalAmount = prix * 100;
-    if (isForceOneEuro) finalAmount = 100;
-
-    console.log(`💰 Montant final envoyé à Stripe : ${finalAmount / 100} €`);
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      line_items: [{
-        price_data: {
-          currency: 'eur',
-          product_data: { name: `${logement} - ${nuits} nuit(s)` },
-          unit_amount: finalAmount,
-        },
-        quantity: 1,
-      }],
-      mode: 'payment',
-      success_url: `${BASE_URL}/confirmation.html?success=true`,
-      cancel_url: `${BASE_URL}/blom/`,
-      metadata: { date, logement, nuits, email }
-    });
-
-    res.json({ url: session.url });
-  } catch (err) {
-    console.error("❌ Erreur Stripe Checkout :", err);
-    res.status(500).json({ error: 'Erreur lors de la réservation.' });
-  }
 });
 
 // ======== Serveur ========
