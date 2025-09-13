@@ -94,9 +94,9 @@ app.post('/create-checkout-session', async (req, res) => {
 
   try {
     let finalAmount = prix * 100;
-    if (process.env.TEST_PAYMENT === "true" && !isProduction) {
-      finalAmount = 100; // 1 € pour test
-    }
+if (process.env.TEST_PAYMENT === "true") {
+  finalAmount = 100; // 1 € pour test même en production
+}
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
