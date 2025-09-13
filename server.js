@@ -10,40 +10,34 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ======== Configuration environnement ========
-const NODE_ENV = process.env.NODE_ENV || 'development';
-const STRIPE_MODE = process.env.STRIPE_MODE || 'test'; // 'test' ou 'live'
-const TEST_PAYMENT = process.env.TEST_PAYMENT === 'true';
+// ======== Choix de la clé Stripe selon STRIPE_MODE ========
+const stripeMode = process.env.STRIPE_MODE || "test"; // "test" ou "live"
+const stripeSecretKey =
+  stripeMode === "live" ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_KEY;
 
-const isProduction = NODE_ENV === 'production';
-const isStripeLive = STRIPE_MODE === 'live';
-
-// ======== Clés Stripe selon environnement ========
-const stripeSecretKey = isStripeLive
-  ? process.env.STRIPE_SECRET_KEY      // live
-  : process.env.STRIPE_TEST_KEY;       // test
-
-const stripeWebhookSecret = isStripeLive
-  ? process.env.STRIPE_WEBHOOK_SECRET
-  : process.env.STRIPE_WEBHOOK_TEST_SECRET;
+const stripeWebhookSecret =
+  stripeMode === "live"
+    ? process.env.STRIPE_WEBHOOK_SECRET
+    : process.env.STRIPE_WEBHOOK_TEST_SECRET;
 
 const stripe = Stripe(stripeSecretKey);
 
-console.log(`🌍 NODE_ENV : ${NODE_ENV}`);
-console.log(`💳 STRIPE_MODE : ${STRIPE_MODE}`);
-console.log(`💳 TEST_PAYMENT : ${TEST_PAYMENT}`);
-console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? '✅ OK' : '❌ NON DEFINIE'}`);
+console.log(`🌍 NODE_ENV : ${process.env.NODE_ENV}`);
+console.log(`💳 STRIPE_MODE : ${stripeMode}`);
+console.log(`💳 TEST_PAYMENT : ${process.env.TEST_PAYMENT}`);
+console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? "✅ OK" : "❌ NON DEFINIE"}`);
 
-// ======== Middlewares ========
+// ======== Middlewares généraux ========
 app.use(cors());
 app.use(express.static('public'));
 
-// ⚠️ express.json() après le webhook pour préserver le raw body
-// ======== Stripe Webhook ========
+// ⚠️ Ne pas mettre express.json() ici → sinon casse le webhook
+
+// ======== Stripe Webhook (avant express.json) ========
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
-  let event;
 
+  let event;
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
   } catch (err) {
@@ -98,7 +92,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   res.json({ received: true });
 });
 
-// ======== Middleware JSON pour toutes les autres routes ========
+// ======== Middleware JSON après le webhook ========
 app.use(express.json());
 
 // ======== iCal ========
@@ -150,7 +144,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
 });
 
 // ======== Stripe Checkout ========
-const BASE_URL = isProduction ? 'https://livablom.fr' : `http://localhost:${PORT}`;
+const BASE_URL = stripeMode === "live" ? 'https://livablom.fr' : `http://localhost:${PORT}`;
 
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
@@ -161,7 +155,9 @@ app.post('/create-checkout-session', async (req, res) => {
 
   try {
     let finalAmount = prix * 100;
-    if (TEST_PAYMENT) finalAmount = 100; // paiement 1 € pour test
+    if (process.env.TEST_PAYMENT === "true") {
+      finalAmount = 100; // 1 € pour test
+    }
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
