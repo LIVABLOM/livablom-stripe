@@ -30,7 +30,7 @@ console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? '✅ OK' : '❌ NO
 app.use(cors());
 app.use(express.static('public'));
 
-// ⚠️ NE PAS mettre express.json() avant le webhook
+// ⚠️ NE PAS mettre express.json() ici, sinon il casse le raw body du webhook
 
 // ======== Stripe Webhook (raw body obligatoire) ========
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
@@ -69,7 +69,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
     console.log("📅 Réservation enregistrée !");
 
-    // Envoi email de confirmation interne
+    // Envoi email
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
@@ -154,8 +154,10 @@ app.post('/create-checkout-session', async (req, res) => {
 
   try {
     let finalAmount = prix * 100;
-    if (process.env.TEST_PAYMENT === "true" && !isProduction) {
-      finalAmount = 100; // 1 € pour test
+
+    // ⚡ Forcer le paiement à 1 € si TEST_PAYMENT=true (prioritaire sur tout)
+    if (process.env.TEST_PAYMENT === "true") {
+      finalAmount = 100;
     }
 
     const session = await stripe.checkout.sessions.create({
