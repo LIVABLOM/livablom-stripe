@@ -10,30 +10,31 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ======== Mode Stripe ========
+// ======== Gestion des clés Stripe ========
 const stripeMode = process.env.STRIPE_MODE || "live"; // "test" ou "live"
-const testPayment = process.env.TEST_PAYMENT === "true";
+const isTestMode = stripeMode === "test";
+const isForceOneEuro = process.env.TEST_PAYMENT === "true";
 
-const stripeSecretKey = stripeMode === "test"
+const stripeSecretKey = isTestMode
   ? process.env.STRIPE_TEST_KEY
   : process.env.STRIPE_SECRET_KEY;
 
-const stripeWebhookSecret = stripeMode === "test"
+const stripeWebhookSecret = isTestMode
   ? process.env.STRIPE_WEBHOOK_TEST_SECRET
   : process.env.STRIPE_WEBHOOK_SECRET;
 
 const stripe = Stripe(stripeSecretKey);
 
-console.log(`🌍 Mode Stripe : ${stripeMode}`);
-console.log(`💳 Mode TEST_PAYMENT : ${testPayment}`);
-console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? '✅ OK' : '❌ NON DEFINIE'}`);
+console.log(`🌍 Environnement Node : ${process.env.NODE_ENV}`);
+console.log(`💳 Stripe Mode : ${isTestMode ? "TEST (cartes virtuelles)" : "LIVE (paiements réels)"}`);
+console.log(`💶 Paiement forcé à 1 € : ${isForceOneEuro ? "✅ Oui" : "❌ Non"}`);
+console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? "✅ OK" : "❌ NON DEFINIE"}`);
 
-// ======== Middlewares généraux ========
+// ======== Middlewares ========
 app.use(cors());
 app.use(express.static('public'));
 
-// ⚠️ NE PAS mettre express.json() avant le webhook
-
+// ⚠️ express.json() doit être après le webhook pour préserver le raw body
 // ======== Stripe Webhook ========
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
@@ -145,7 +146,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
 });
 
 // ======== Stripe Checkout ========
-const BASE_URL = stripeMode === "live" ? 'https://livablom.fr' : `http://localhost:${PORT}`;
+const BASE_URL = isTestMode ? `http://localhost:${PORT}` : 'https://livablom.fr';
 
 app.post('/create-checkout-session', async (req, res) => {
   const { date, logement, nuits, prix, email } = req.body;
@@ -156,9 +157,9 @@ app.post('/create-checkout-session', async (req, res) => {
 
   try {
     let finalAmount = prix * 100;
-    if (testPayment) {
-      finalAmount = 100; // 1 € pour test réel
-    }
+    if (isForceOneEuro) finalAmount = 100;
+
+    console.log(`💰 Montant final envoyé à Stripe : ${finalAmount / 100} €`);
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
