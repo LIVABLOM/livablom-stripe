@@ -4,13 +4,39 @@ const cors = require('cors');
 const Stripe = require('stripe');
 const fetch = require('node-fetch');
 const ical = require('ical');
-const fs = require('fs');
 const nodemailer = require('nodemailer');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ======== Choix de la clé Stripe selon STRIPE_MODE ========
+// ======== PostgreSQL ========
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL, // Railway donne cette variable
+  ssl: { rejectUnauthorized: false },
+});
+
+// Vérification + création de la table
+async function initDB() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS reservations (
+        id SERIAL PRIMARY KEY,
+        logement TEXT NOT NULL,
+        email TEXT NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    console.log("📦 Table reservations prête !");
+  } catch (err) {
+    console.error("❌ Erreur init DB :", err);
+  }
+}
+initDB();
+
+// ======== Choix de la clé Stripe ========
 const stripeMode = process.env.STRIPE_MODE || "test"; // "test" ou "live"
 const stripeSecretKey =
   stripeMode === "live" ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_KEY;
@@ -27,17 +53,17 @@ console.log(`💳 STRIPE_MODE : ${stripeMode}`);
 console.log(`💳 TEST_PAYMENT : ${process.env.TEST_PAYMENT}`);
 console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? "✅ OK" : "❌ NON DEFINIE"}`);
 
-// ======== Middlewares généraux ========
+// ======== Middlewares ========
 app.use(cors());
 app.use(express.static('public'));
 
-// ⚠️ Ne pas mettre express.json() ici → sinon casse le webhook
+// ⚠️ Pas de express.json ici → casse le webhook Stripe
 
-// ======== Stripe Webhook (avant express.json) ========
-app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+// ======== Webhook Stripe ========
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
-
   let event;
+
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
   } catch (err) {
@@ -51,26 +77,24 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
-    // Enregistrement réservation
-    const filePath = './reservations.json';
-    let reservations = {};
-    if (fs.existsSync(filePath)) reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    if (!reservations[logement]) reservations[logement] = [];
-
+    // Dates de réservation
     const startDate = new Date(date);
     const endDate = new Date(startDate);
     endDate.setDate(startDate.getDate() + parseInt(nuits));
 
-    reservations[logement].push({
-      title: `Réservé (${email})`,
-      start: startDate.toISOString().split('T')[0],
-      end: endDate.toISOString().split('T')[0]
-    });
+    // 🔹 Insertion en base
+    try {
+      await pool.query(
+        `INSERT INTO reservations (logement, email, start_date, end_date)
+         VALUES ($1, $2, $3, $4)`,
+        [logement, email, startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]]
+      );
+      console.log("📅 Réservation enregistrée en base !");
+    } catch (err) {
+      console.error("❌ Erreur insertion réservation :", err);
+    }
 
-    fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
-    console.log("📅 Réservation enregistrée !");
-
-    // Envoi email
+    // 🔹 Envoi email
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
@@ -92,7 +116,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   res.json({ received: true });
 });
 
-// ======== Middleware JSON après le webhook ========
+// ======== JSON après webhook ========
 app.use(express.json());
 
 // ======== iCal ========
@@ -124,17 +148,27 @@ app.get("/api/reservations/:logement", async (req, res) => {
 
   try {
     let events = [];
+
+    // 🔹 iCal externes
     for (const url of calendars[logement]) {
       const e = await fetchICal(url, logement);
       events = events.concat(e);
     }
 
-    // Ajout des réservations locales
-    const filePath = './reservations.json';
-    if (fs.existsSync(filePath)) {
-      const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      if (localReservations[logement]) events = events.concat(localReservations[logement]);
-    }
+    // 🔹 Réservations DB
+    const { rows } = await pool.query(
+      `SELECT logement, email, start_date, end_date FROM reservations WHERE logement = $1`,
+      [logement]
+    );
+
+    rows.forEach(r => {
+      events.push({
+        title: `Réservé (${r.email})`,
+        start: r.start_date,
+        end: r.end_date,
+        logement: r.logement
+      });
+    });
 
     res.json(events);
   } catch (err) {
@@ -156,7 +190,7 @@ app.post('/create-checkout-session', async (req, res) => {
   try {
     let finalAmount = prix * 100;
     if (process.env.TEST_PAYMENT === "true") {
-      finalAmount = 100; // 1 € pour test
+      finalAmount = 100; // 1 € test
     }
 
     const session = await stripe.checkout.sessions.create({
