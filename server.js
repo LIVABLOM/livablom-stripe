@@ -6,13 +6,13 @@ const fetch = require('node-fetch');
 const ical = require('ical');
 const fs = require('fs');
 const nodemailer = require('nodemailer');
-const { Pool } = require('pg'); // PostgreSQL
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ======== Choix de la clé Stripe selon STRIPE_MODE ========
-const stripeMode = process.env.STRIPE_MODE || "test";
+// ======== Stripe Setup ========
+const stripeMode = process.env.STRIPE_MODE || "test"; // "test" ou "live"
 const stripeSecretKey =
   stripeMode === "live" ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_KEY;
 
@@ -23,28 +23,25 @@ const stripeWebhookSecret =
 
 const stripe = Stripe(stripeSecretKey);
 
+console.log(`🌍 NODE_ENV : ${process.env.NODE_ENV}`);
+console.log(`💳 STRIPE_MODE : ${stripeMode}`);
+console.log(`🔑 Clé Stripe utilisée : ${stripeSecretKey ? "✅ OK" : "❌ NON DEFINIE"}`);
+
 // ======== PostgreSQL ========
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: { rejectUnauthorized: false }
 });
 
-// Test connexion PostgreSQL
-pool.query('SELECT NOW()', (err, res) => {
-  if (err) console.error("❌ Erreur PostgreSQL :", err);
-  else console.log("✅ PostgreSQL connecté :", res.rows[0].now);
-});
-
-// ======== Middlewares généraux ========
+// ======== Middlewares ========
 app.use(cors());
 app.use(express.static('public'));
 
-// ⚠️ Ne pas mettre express.json() ici → sinon casse le webhook
-
-// ======== Stripe Webhook (avant express.json) ========
+// ⚠️ express.json() ne doit pas être utilisé avant le webhook
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
+
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
   } catch (err) {
@@ -58,28 +55,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
-    // ======= Stockage dans PostgreSQL =======
-    try {
-      await pool.query(
-        `INSERT INTO reservations
-        (nom_client, email, logement, date_reservation, nuits, montant, stripe_payment_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          email, // nom_client → on met email comme identifiant
-          email,
-          logement,
-          date,
-          parseInt(nuits),
-          session.amount_total / 100, // montant en euros
-          session.payment_intent
-        ]
-      );
-      console.log("📌 Réservation enregistrée en base PostgreSQL !");
-    } catch (dbErr) {
-      console.error("❌ Erreur insertion PostgreSQL :", dbErr);
-    }
-
-    // ======= Stockage dans fichier JSON (optionnel) =======
+    // --- Enregistrement JSON ---
     const filePath = './reservations.json';
     let reservations = {};
     if (fs.existsSync(filePath)) reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -96,9 +72,30 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     });
 
     fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
-    console.log("📅 Réservation enregistrée dans le fichier JSON !");
+    console.log("📅 Réservation enregistrée dans reservations.json !");
 
-    // ======= Envoi email =======
+    // --- Enregistrement PostgreSQL ---
+    try {
+      const insertQuery = `
+        INSERT INTO reservations 
+        (nom_client, email, logement, date_reservation, nuits, montant, stripe_payment_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `;
+      await pool.query(insertQuery, [
+        session.customer_details?.name || 'Inconnu',
+        email,
+        logement,
+        date,
+        parseInt(nuits),
+        session.amount_total / 100,
+        session.id
+      ]);
+      console.log("📦 Réservation ajoutée à PostgreSQL !");
+    } catch (err) {
+      console.error("❌ Erreur PostgreSQL :", err.message);
+    }
+
+    // --- Envoi email ---
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
@@ -120,7 +117,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   res.json({ received: true });
 });
 
-// ======== Middleware JSON après le webhook ========
+// ======== Middleware JSON ========
 app.use(express.json());
 
 // ======== iCal ========
@@ -131,7 +128,6 @@ async function fetchICal(url, logement) {
     const res = await fetch(url);
     const data = await res.text();
     const parsed = ical.parseICS(data);
-
     return Object.values(parsed)
       .filter(ev => ev.start && ev.end)
       .map(ev => ({
@@ -183,9 +179,7 @@ app.post('/create-checkout-session', async (req, res) => {
 
   try {
     let finalAmount = prix * 100;
-    if (process.env.TEST_PAYMENT === "true") {
-      finalAmount = 100; // 1 € pour test
-    }
+    if (process.env.TEST_PAYMENT === "true") finalAmount = 100; // 1€ test
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
