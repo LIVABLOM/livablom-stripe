@@ -11,10 +11,17 @@ const { Pool } = require('pg');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ======== Stripe configuration ========
+// ======== PostgreSQL ========
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false } // nécessaire pour Railway
+});
+
+// ======== Stripe ========
 const stripeMode = process.env.STRIPE_MODE || "test";
 const stripeSecretKey =
   stripeMode === "live" ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_KEY;
+
 const stripeWebhookSecret =
   stripeMode === "live"
     ? process.env.STRIPE_WEBHOOK_SECRET
@@ -22,23 +29,17 @@ const stripeWebhookSecret =
 
 const stripe = Stripe(stripeSecretKey);
 
-// ======== PostgreSQL ========
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
-
-pool.on('error', (err) => console.error('PostgreSQL pool error', err));
-
 // ======== Middlewares ========
 app.use(cors());
 app.use(express.static('public'));
 
-// ⚠️ webhook doit être avant express.json()
+// ⚠️ express.json() après webhook
+
+// ======== Stripe Webhook ========
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
-
   let event;
+
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
   } catch (err) {
@@ -52,39 +53,36 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
     console.log(`✅ Paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
-    // Calcul des dates
+    // ===== Enregistrement dans bookings.json =====
+    const filePath = './bookings.json';
+    let reservations = {};
+    if (fs.existsSync(filePath)) reservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    if (!reservations[logement]) reservations[logement] = [];
+
     const startDate = new Date(date);
     const endDate = new Date(startDate);
     endDate.setDate(startDate.getDate() + parseInt(nuits));
 
-    // ======== PostgreSQL : insertion réservation ========
-    try {
-      const query = `
-        INSERT INTO reservations (logement, email, date_debut, date_fin)
-        VALUES ($1, $2, $3, $4)
-      `;
-      await pool.query(query, [logement, email, startDate, endDate]);
-      console.log('📦 Réservation insérée en base PostgreSQL !');
-    } catch (err) {
-      console.error('❌ Erreur PostgreSQL :', err.message);
-    }
-
-    // ======== Enregistrement local JSON (optionnel) ========
-    const filePath = './bookings.json';
-    let bookings = {};
-    if (fs.existsSync(filePath)) bookings = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    if (!bookings[logement]) bookings[logement] = [];
-
-    bookings[logement].push({
+    reservations[logement].push({
       title: `Réservé (${email})`,
       start: startDate.toISOString().split('T')[0],
       end: endDate.toISOString().split('T')[0]
     });
-
-    fs.writeFileSync(filePath, JSON.stringify(bookings, null, 2));
+    fs.writeFileSync(filePath, JSON.stringify(reservations, null, 2));
     console.log("📅 Réservation enregistrée dans bookings.json !");
 
-    // ======== Envoi email ========
+    // ===== Enregistrement PostgreSQL =====
+    try {
+      await pool.query(
+        `INSERT INTO reservations (logement, email, date_debut, date_de_fin) VALUES ($1, $2, $3, $4)`,
+        [logement, email, startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]]
+      );
+      console.log("✅ Réservation enregistrée dans PostgreSQL !");
+    } catch (err) {
+      console.error("❌ Erreur PostgreSQL :", err.message);
+    }
+
+    // ===== Envoi email =====
     try {
       const transporter = nodemailer.createTransport({
         service: 'gmail',
@@ -108,8 +106,56 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   res.json({ received: true });
 });
 
-// ======== Middleware JSON après webhook ========
+// ===== Middleware JSON après webhook =====
 app.use(express.json());
+
+// ======== iCal ========
+const calendars = { LIVA: [], BLOM: [] };
+
+async function fetchICal(url, logement) {
+  try {
+    const res = await fetch(url);
+    const data = await res.text();
+    const parsed = ical.parseICS(data);
+
+    return Object.values(parsed)
+      .filter(ev => ev.start && ev.end)
+      .map(ev => ({
+        summary: ev.summary || "Réservé",
+        start: ev.start,
+        end: ev.end,
+        logement
+      }));
+  } catch (err) {
+    console.error("Erreur iCal pour", url, err);
+    return [];
+  }
+}
+
+app.get("/api/reservations/:logement", async (req, res) => {
+  const logement = req.params.logement.toUpperCase();
+  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
+
+  try {
+    let events = [];
+    for (const url of calendars[logement]) {
+      const e = await fetchICal(url, logement);
+      events = events.concat(e);
+    }
+
+    // Ajout des réservations locales
+    const filePath = './bookings.json';
+    if (fs.existsSync(filePath)) {
+      const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      if (localReservations[logement]) events = events.concat(localReservations[logement]);
+    }
+
+    res.json(events);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
 
 // ======== Stripe Checkout ========
 const BASE_URL = stripeMode === "live" ? 'https://livablom.fr' : `http://localhost:${PORT}`;
@@ -143,10 +189,12 @@ app.post('/create-checkout-session', async (req, res) => {
 
     res.json({ url: session.url });
   } catch (err) {
-    console.error("❌ Erreur Stripe Checkout :", err.message);
+    console.error("❌ Erreur Stripe Checkout :", err);
     res.status(500).json({ error: 'Erreur lors de la réservation.' });
   }
 });
 
 // ======== Serveur ========
-app.listen(PORT, () => console.log(`🚀 Serveur lancé sur ${BASE_URL}`));
+app.listen(PORT, () => {
+  console.log(`🚀 Serveur lancé sur ${BASE_URL}`);
+});
