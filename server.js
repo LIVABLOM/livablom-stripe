@@ -15,6 +15,8 @@ const PORT = process.env.PORT || 4000;
 const STRIPE_MODE = process.env.STRIPE_MODE || 'test';
 const STRIPE_KEY = STRIPE_MODE === 'live' ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_KEY;
 const STRIPE_WEBHOOK_SECRET = STRIPE_MODE === 'live' ? process.env.STRIPE_WEBHOOK_SECRET : process.env.STRIPE_WEBHOOK_TEST_SECRET;
+
+// FRONTEND_URL doit être le domaine réel de ton site, ou localhost pour tests
 const FRONTEND_URL = process.env.FRONTEND_URL || `http://localhost:${PORT}`;
 
 const BREVO_SENDER = process.env.BREVO_SENDER;
@@ -34,29 +36,26 @@ const pool = new Pool({
 });
 
 async function insertReservation(logement, email, dateDebut, dateFin) {
-  try {
-    const result = await pool.query(
-      `INSERT INTO reservations (logement, email, date_debut, date_fin, cree_le)
-       VALUES ($1, $2, $3, $4, now())
-       RETURNING *`,
-      [logement, email, dateDebut, dateFin]
-    );
-    console.log('✅ Réservation enregistrée dans PostgreSQL :', result.rows[0]);
-    return result.rows[0];
-  } catch (err) {
-    console.error('❌ Erreur PostgreSQL :', err.message);
-    throw err;
-  }
+  const result = await pool.query(
+    `INSERT INTO reservations (logement, email, date_debut, date_fin, cree_le)
+     VALUES ($1, $2, $3, $4, now())
+     RETURNING *`,
+    [logement, email, dateDebut, dateFin]
+  );
+  console.log('✅ Réservation enregistrée dans PostgreSQL :', result.rows[0]);
+  return result.rows[0];
 }
 
 // ================= Middlewares =================
 app.use(cors());
 app.use(express.static('public'));
+app.use(express.json());
 
 // ================= Webhook Stripe =================
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
+
   try {
     event = Stripe(STRIPE_KEY).webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
   } catch (err) {
@@ -101,12 +100,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
             subject: `Nouvelle réservation : ${logement}`,
             textContent: `Réservation confirmée pour ${logement}\nDate : ${date}\nNombre de nuits : ${nuits}\nEmail client : ${email}`,
           },
-          {
-            headers: {
-              'api-key': BREVO_API_KEY,
-              'Content-Type': 'application/json',
-            },
-          }
+          { headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json' } }
         );
         console.log('📧 Email envoyé avec succès :', brevoResponse.data);
       } catch (error) {
@@ -120,8 +114,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   res.json({ received: true });
 });
 
-app.use(express.json());
-
 // ================= iCal =================
 const calendars = { LIVA: [], BLOM: [] };
 
@@ -132,12 +124,7 @@ async function fetchICal(url, logement) {
     const parsed = ical.parseICS(data);
     return Object.values(parsed)
       .filter(ev => ev.start && ev.end)
-      .map(ev => ({
-        summary: ev.summary || 'Réservé',
-        start: ev.start,
-        end: ev.end,
-        logement,
-      }));
+      .map(ev => ({ summary: ev.summary || 'Réservé', start: ev.start, end: ev.end, logement }));
   } catch (err) {
     console.error('Erreur iCal pour', url, err);
     return [];
@@ -151,11 +138,9 @@ app.get('/api/reservations/:logement', async (req, res) => {
   try {
     let events = [];
     for (const url of calendars[logement]) {
-      const e = await fetchICal(url, logement);
-      events = events.concat(e);
+      events = events.concat(await fetchICal(url, logement));
     }
 
-    // Ajout réservations locales
     const filePath = './bookings.json';
     if (fs.existsSync(filePath)) {
       const localReservations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -176,21 +161,18 @@ app.post('/create-checkout-session', async (req, res) => {
 
   try {
     let finalAmount = prix * 100;
-    if (process.env.TEST_PAYMENT === 'true') finalAmount = 100; // 1€ pour test
+    if (process.env.TEST_PAYMENT === 'true') finalAmount = 100; // 1€ test
 
     const session = await Stripe(STRIPE_KEY).checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
-        price_data: {
-          currency: 'eur',
-          product_data: { name: `${logement} - ${nuits} nuit(s)` },
-          unit_amount: finalAmount,
-        },
+        price_data: { currency: 'eur', product_data: { name: `${logement} - ${nuits} nuit(s)` }, unit_amount: finalAmount },
         quantity: 1,
       }],
       mode: 'payment',
-      success_url: `${FRONTEND_URL}/confirmation.html?success=true`,
-      cancel_url: `${FRONTEND_URL}/blom/`,
+      // ⚠️ Correction des URLs pour éviter la 404
+      success_url: `${FRONTEND_URL}/confirmation.html?logement=${logement}&success=true`,
+      cancel_url: `${FRONTEND_URL}/${logement.toLowerCase()}/`,
       metadata: { date, logement, nuits, email },
     });
 
