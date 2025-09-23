@@ -12,18 +12,18 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 // ----- URLs / Config -----
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://livablom.fr'; // site vitrine
-const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`; // backend payments
-const CALENDAR_URL = process.env.CALENDAR_URL || ''; // ex: calendrier-proxy
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://livablom.fr';
+const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
+const CALENDAR_URL = process.env.CALENDAR_URL || '';
 
 const STRIPE_MODE = process.env.STRIPE_MODE || 'test';
 const STRIPE_KEY = STRIPE_MODE === 'live' ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_KEY;
 const STRIPE_WEBHOOK_SECRET = STRIPE_MODE === 'live' ? process.env.STRIPE_WEBHOOK_SECRET : process.env.STRIPE_WEBHOOK_TEST_SECRET;
 
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
-const BREVO_SENDER = process.env.BREVO_SENDER; // ex: contact@livablom.fr
+const BREVO_SENDER = process.env.BREVO_SENDER;
 const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || 'LIVABLŌM';
-const BREVO_TO = process.env.BREVO_TO; // ex: livablom59@gmail.com
+const BREVO_TO = process.env.BREVO_TO;
 
 console.log('DATABASE_URL :', process.env.DATABASE_URL);
 console.log('🌍 NODE_ENV :', process.env.NODE_ENV);
@@ -149,7 +149,6 @@ app.get('/api/reservations/:logement', async (req, res) => {
       return res.status(500).json({ error: 'Erreur proxy calendrier' });
     }
   }
-  // fallback local
   try {
     const filePath = './bookings.json';
     if (!fs.existsSync(filePath)) return res.json([]);
@@ -190,7 +189,7 @@ app.post('/create-checkout-session', async (req, res) => {
         quantity: 1,
       }],
       mode: 'payment',
-      success_url: `${FRONTEND_URL}/confirmation/?success=true&logement=${encodeURIComponent(logement)}`,
+      success_url: `${FRONTEND_URL}/confirmation/?success=true&logement=${encodeURIComponent(logement)}&date=${encodeURIComponent(date)}&nuits=${encodeURIComponent(nuits)}&montant=${encodeURIComponent(totalCents/100)}`,
       cancel_url: `${FRONTEND_URL}/${encodeURIComponent(logement.toLowerCase())}/`,
       metadata: { date, logement, nuits, email: body.email || null }
     });
