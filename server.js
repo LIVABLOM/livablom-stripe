@@ -1,117 +1,187 @@
-// ----- Dépendances -----
+require('dotenv').config();
 const express = require('express');
-const bodyParser = require('body-parser');
 const cors = require('cors');
-const stripeLib = require('stripe');
-const { Pool } = require('pg');
 const fs = require('fs');
-const ics = require('ics');
-const path = require('path');
-const fetch = require('node-fetch');
+const Stripe = require('stripe');
+const axios = require('axios');
+const ical = require('ical'); // utilisé pour parser, pas générer
+const { Pool } = require('pg');
 
-// ----- Variables d'env -----
-const PORT = process.env.PORT || 3000;
+const app = express();
+const PORT = process.env.PORT || 4000;
+
+// ----- URLs / Config -----
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://livablom.fr';
+const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
 const STRIPE_MODE = process.env.STRIPE_MODE || 'test';
 const STRIPE_KEY = STRIPE_MODE === 'live' ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_KEY;
-const stripe = stripeLib(STRIPE_KEY);
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:4000';
-const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
+const STRIPE_WEBHOOK_SECRET = STRIPE_MODE === 'live' ? process.env.STRIPE_WEBHOOK_SECRET : process.env.STRIPE_WEBHOOK_TEST_SECRET;
 
-// PostgreSQL
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const BREVO_SENDER = process.env.BREVO_SENDER || 'contact@livablom.fr';
+const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || 'LIVABLŌM';
+const BREVO_TO = process.env.BREVO_TO || 'livablom59@gmail.com';
+
+console.log('DATABASE_URL :', process.env.DATABASE_URL);
+console.log('🌍 NODE_ENV :', process.env.NODE_ENV);
+console.log('💳 STRIPE_MODE :', STRIPE_MODE);
+console.log('🔑 STRIPE_KEY :', STRIPE_KEY ? 'OK' : 'MISSING');
+console.log('🔒 STRIPE_WEBHOOK_SECRET :', STRIPE_WEBHOOK_SECRET ? 'OK' : 'MISSING');
+console.log('📧 BREVO configured :', BREVO_API_KEY ? 'OK' : 'NO API KEY', ' sender:', BREVO_SENDER);
+
+// ----- Stripe init -----
+const stripe = Stripe(STRIPE_KEY);
+
+// ----- PostgreSQL -----
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: { rejectUnauthorized: false },
 });
 
-// ----- App Express -----
-const app = express();
+async function insertReservation(logement, email, dateDebut, dateFin, montant) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO reservations (logement, email, date_debut, date_fin, montant, cree_le)
+       VALUES ($1, $2, $3, $4, $5, now())
+       RETURNING *`,
+      [logement, email, dateDebut, dateFin, montant]
+    );
+    console.log('✅ Réservation enregistrée dans PostgreSQL :', result.rows[0]);
+    return result.rows[0];
+  } catch (err) {
+    console.error('❌ Erreur PostgreSQL :', err.message || err);
+    throw err;
+  }
+}
+
+// ----- Middlewares -----
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.static('public'));
+app.use(express.json());
 
-// ----- Table reservations -----
-async function initDB() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS reservations (
-      id SERIAL PRIMARY KEY,
-      logement TEXT NOT NULL,
-      date DATE NOT NULL,
-      nuits INTEGER DEFAULT 1,
-      montant INTEGER DEFAULT 0,
-      email TEXT,
-      created_at TIMESTAMP DEFAULT NOW()
-    );
-  `);
-}
-initDB().catch(err => console.error('Erreur initDB:', err));
-
-// ----- Insert réservation -----
-async function insertReservation({ logement, date, nuits, montant, email }) {
+// ----- Webhook Stripe -----
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
   try {
-    await pool.query(
-      `INSERT INTO reservations (logement, date, nuits, montant, email) VALUES ($1, $2, $3, $4, $5)`,
-      [logement, date, nuits, montant, email]
-    );
+    event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
   } catch (err) {
-    console.error("❌ Erreur PostgreSQL :", err.message || err);
-    // fallback JSON local
-    const file = path.join(__dirname, 'bookings.json');
-    let data = [];
-    if (fs.existsSync(file)) data = JSON.parse(fs.readFileSync(file, 'utf8'));
-    data.push({ logement, date, nuits, montant, email, created_at: new Date().toISOString() });
-    fs.writeFileSync(file, JSON.stringify(data, null, 2));
-    console.log("📅 Réservation enregistrée dans bookings.json");
+    console.error('⚠️ Erreur webhook signature:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
   }
-}
 
-// ----- Email confirmation (Brevo) -----
-async function sendConfirmationEmail({ to, logement, date, nuits, montant }) {
-  if (!process.env.BREVO_API_KEY || !to) return;
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const date = session.metadata.date || new Date().toISOString();
+    const logement = session.metadata.logement || 'BLŌM';
+    const nuits = parseInt(session.metadata.nuits || 1, 10);
+    const email = session.metadata.email || session.customer_details?.email || null;
+    const montant = session.amount_total ? session.amount_total / 100 : 0;
 
-  const body = {
-    sender: { email: 'contact@livablom.fr', name: 'LIVABLŌM' },
-    to: [{ email: to }],
-    subject: "Confirmation de votre réservation",
-    htmlContent: `
-      <h2>Merci pour votre réservation !</h2>
-      <p><b>Logement :</b> ${logement}</p>
-      <p><b>Date d’arrivée :</b> ${date}</p>
-      <p><b>Nombre de nuits :</b> ${nuits}</p>
-      <p><b>Montant payé :</b> ${montant} €</p>
-    `
-  };
+    console.log(`✅ Webhook: paiement confirmé pour ${logement} - ${nuits} nuit(s) - ${date}`);
 
+    const startDate = new Date(date);
+    const endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + nuits);
+
+    // BDD
+    try { await insertReservation(logement, email, startDate.toISOString(), endDate.toISOString(), montant); }
+    catch (err) { console.error('Erreur insertReservation:', err.message); }
+
+    // Backup bookings.json
+    try {
+      const filePath = './bookings.json';
+      let bookings = {};
+      if (fs.existsSync(filePath)) bookings = JSON.parse(fs.readFileSync(filePath, 'utf-8') || '{}');
+      if (!bookings[logement]) bookings[logement] = [];
+      bookings[logement].push({
+        title: `Réservé (${email || 'client'})`,
+        start: startDate.toISOString().split('T')[0],
+        end: endDate.toISOString().split('T')[0],
+      });
+      fs.writeFileSync(filePath, JSON.stringify(bookings, null, 2));
+      console.log('📅 Réservation enregistrée dans bookings.json');
+    } catch (err) {
+      console.error('Erreur sauvegarde bookings.json :', err.message);
+    }
+
+    // Email via Brevo
+    if (BREVO_API_KEY && BREVO_SENDER && BREVO_TO) {
+      try {
+        const payload = {
+          sender: { name: BREVO_SENDER_NAME, email: BREVO_SENDER },
+          to: [{ email: BREVO_TO }, { email: email || BREVO_TO }],
+          subject: `Nouvelle réservation : ${logement}`,
+          textContent: `Réservation confirmée pour ${logement}\nDate : ${startDate.toISOString().split('T')[0]}\nNuits : ${nuits}\nEmail client : ${email || 'non fourni'}\nMontant : ${montant} €`,
+          htmlContent: `<p>Réservation confirmée pour <strong>${logement}</strong></p>
+                        <p>Date : ${startDate.toISOString().split('T')[0]}</p>
+                        <p>Nuits : ${nuits}</p>
+                        <p>Email client : ${email || 'non fourni'}</p>
+                        <p>Montant : ${montant} €</p>`
+        };
+        const resBrevo = await axios.post('https://api.brevo.com/v3/smtp/email', payload, {
+          headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json' }
+        });
+        console.log('📧 Email Brevo envoyé:', resBrevo.data);
+      } catch (err) {
+        console.error('❌ Erreur envoi email Brevo :', err.response ? err.response.data : err.message);
+      }
+    }
+  }
+
+  res.json({ received: true });
+});
+
+// ----- iCal dynamique -----
+app.get('/ical/:logement.ics', async (req, res) => {
+  const logement = req.params.logement.toUpperCase();
   try {
-    const resp = await fetch("https://api.brevo.com/v3/smtp/email", {
-      method: "POST",
-      headers: {
-        "accept": "application/json",
-        "content-type": "application/json",
-        "api-key": process.env.BREVO_API_KEY
-      },
-      body: JSON.stringify(body)
-    });
-    const result = await resp.json();
-    console.log("📧 Email Brevo envoyé:", result);
-  } catch (err) {
-    console.error("❌ Erreur envoi Brevo:", err.message || err);
-  }
-}
+    const filePath = './bookings.json';
+    let bookings = {};
+    if (fs.existsSync(filePath)) bookings = JSON.parse(fs.readFileSync(filePath, 'utf-8') || '{}');
+    const events = (bookings[logement] || []).map(b => {
+      const start = new Date(b.start);
+      const end = new Date(b.end);
+      return `BEGIN:VEVENT
+SUMMARY:Réservé
+DTSTART;VALUE=DATE:${start.toISOString().split('T')[0].replace(/-/g,'')}
+DTEND;VALUE=DATE:${end.toISOString().split('T')[0].replace(/-/g,'')}
+DESCRIPTION:Réservation ${logement}
+END:VEVENT`;
+    }).join('\n');
 
-// ----- Création session Stripe -----
+    const icsContent = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//LIVABLŌM//FR
+CALSCALE:GREGORIAN
+${events}
+END:VCALENDAR`;
+
+    res.setHeader('Content-Type', 'text/calendar');
+    res.send(icsContent);
+  } catch (err) {
+    console.error('❌ Erreur génération ICS:', err.message);
+    res.status(500).send('Erreur ICS');
+  }
+});
+
+// ----- Create Checkout Session -----
 app.post('/create-checkout-session', async (req, res) => {
   try {
     const body = req.body || {};
-    const date = body.date || new Date().toISOString().split('T')[0];
+    const date = body.date || body.arrivalDate || body.date_debut || new Date().toISOString();
     const logement = (body.logement || 'BLŌM').toString();
     const nuits = parseInt(body.nuits || 1, 10);
 
+    // prix ou total
     let totalCents = 0;
     if (body.total) totalCents = Math.round(parseFloat(body.total) * 100);
     else if (body.prix) totalCents = Math.round(parseFloat(body.prix) * 100 * nuits);
+    else if (body.pricePerNight) totalCents = Math.round(parseFloat(body.pricePerNight) * 100 * nuits);
     else return res.status(400).json({ error: 'prix ou total manquant dans la requête' });
 
-    // En mode test → paiement forcé à 1€
-    if (STRIPE_MODE !== 'live') totalCents = 100;
+    // option test
+    if (process.env.TEST_PAYMENT === 'true') totalCents = 100;
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -131,98 +201,12 @@ app.post('/create-checkout-session', async (req, res) => {
 
     res.json({ url: session.url });
   } catch (err) {
-    console.error('❌ Erreur Stripe Checkout :', err.message || err);
+    console.error('❌ Erreur Stripe Checkout :', err.response?.data || err.message || err);
     res.status(500).json({ error: 'Erreur lors de la création de la session de paiement.' });
   }
 });
 
-// ----- Webhook Stripe -----
-app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  const sig = req.headers['stripe-signature'];
-
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.error('❌ Erreur Webhook Stripe :', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-
-    const logement = session.metadata?.logement || 'BLŌM';
-    const date = session.metadata?.date || new Date().toISOString().split('T')[0];
-    const nuits = parseInt(session.metadata?.nuits || 1, 10);
-    const montant = session.amount_total ? session.amount_total / 100 : 0;
-
-    // Si mode test → ajoute (TEST) au logement
-    const isTest = STRIPE_MODE !== 'live';
-    const logementFinal = isTest ? `${logement} (TEST)` : logement;
-
-    try {
-      await insertReservation({
-        logement: logementFinal,
-        date,
-        nuits,
-        montant,
-        email: session.metadata?.email || null
-      });
-
-      console.log(`✅ Réservation enregistrée pour ${logementFinal} - ${nuits} nuit(s) - ${date}`);
-
-      await sendConfirmationEmail({
-        to: session.metadata?.email,
-        logement: logementFinal,
-        date,
-        nuits,
-        montant
-      });
-    } catch (err) {
-      console.error('❌ Erreur insertReservation (webhook):', err.message || err);
-    }
-  }
-
-  res.json({ received: true });
-});
-
-// ----- Génération dynamique .ics -----
-app.get('/ical/:logement.ics', async (req, res) => {
-  try {
-    const logement = decodeURIComponent(req.params.logement);
-    const result = await pool.query(
-      `SELECT date, nuits FROM reservations WHERE logement ILIKE $1 ORDER BY date ASC`,
-      [`${logement}%`] // accepte BLOM et BLOM (TEST)
-    );
-
-    const events = result.rows.map(r => {
-      const startDate = new Date(r.date);
-      const endDate = new Date(startDate);
-      endDate.setDate(endDate.getDate() + r.nuits);
-
-      return {
-        title: `Réservé - ${logement}`,
-        start: [startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate()],
-        end: [endDate.getFullYear(), endDate.getMonth() + 1, endDate.getDate()],
-      };
-    });
-
-    ics.createEvents(events, (error, value) => {
-      if (error) {
-        console.error("❌ Erreur ICS:", error);
-        return res.status(500).send("Erreur ICS");
-      }
-      res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename=${logement}.ics`);
-      res.send(value);
-    });
-  } catch (err) {
-    console.error("❌ Erreur génération ICS:", err.message || err);
-    res.status(500).send("Erreur génération ICS");
-  }
-});
-
-// ----- Lancement -----
+// ----- Start server -----
 app.listen(PORT, () => {
   console.log(`🚀 livablom-stripe démarré. BACKEND_URL=${BACKEND_URL} FRONTEND_URL=${FRONTEND_URL}`);
 });
