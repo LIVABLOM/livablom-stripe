@@ -1,16 +1,20 @@
+// server.js (CommonJS)
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const Stripe = require('stripe');
-const { Pool } = require('pg');
 const axios = require('axios');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
 // ----- Config -----
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://livablom.fr';
+const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
+const CALENDAR_URL = process.env.CALENDAR_URL || ''; // URL proxy calendrier Airbnb/Booking
+
 const STRIPE_MODE = process.env.STRIPE_MODE || 'test';
 const STRIPE_KEY = STRIPE_MODE === 'live' ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_KEY;
 const STRIPE_WEBHOOK_SECRET = STRIPE_MODE === 'live' ? process.env.STRIPE_WEBHOOK_SECRET : process.env.STRIPE_WEBHOOK_TEST_SECRET;
@@ -20,7 +24,7 @@ const BREVO_SENDER = process.env.BREVO_SENDER;
 const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || 'LIVABLŌM';
 const BREVO_TO = process.env.BREVO_TO;
 
-// ----- Stripe -----
+// ----- Stripe init -----
 const stripe = Stripe(STRIPE_KEY);
 
 // ----- PostgreSQL -----
@@ -29,6 +33,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
+// ----- Fonctions -----
 async function insertReservation(logement, email, dateDebut, dateFin, montant) {
   try {
     const result = await pool.query(
@@ -40,7 +45,7 @@ async function insertReservation(logement, email, dateDebut, dateFin, montant) {
     console.log('✅ Réservation enregistrée dans PostgreSQL :', result.rows[0]);
     return result.rows[0];
   } catch (err) {
-    console.error('❌ Erreur PostgreSQL :', err.message || err);
+    console.error('❌ Erreur PostgreSQL :', err.message);
     throw err;
   }
 }
@@ -48,7 +53,7 @@ async function insertReservation(logement, email, dateDebut, dateFin, montant) {
 // ----- Middlewares -----
 app.use(cors());
 app.use(express.static('public'));
-app.use(express.json()); // pour les routes normales
+app.use(express.json()); // Pour toutes les routes sauf webhook
 
 // ----- Webhook Stripe -----
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -76,14 +81,28 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     const endDate = new Date(startDate);
     endDate.setDate(startDate.getDate() + nuits);
 
-    // Enregistrement PostgreSQL
+    // ----- BDD -----
+    try { await insertReservation(logement, email, startDate.toISOString(), endDate.toISOString(), montant); }
+    catch (err) { console.error('Erreur insertReservation (webhook):', err.message); }
+
+    // ----- bookings.json -----
     try {
-      await insertReservation(logement, email, startDate.toISOString(), endDate.toISOString(), montant);
+      const filePath = './bookings.json';
+      let bookings = {};
+      if (fs.existsSync(filePath)) bookings = JSON.parse(fs.readFileSync(filePath, 'utf-8') || '{}');
+      if (!bookings[logement]) bookings[logement] = [];
+      bookings[logement].push({
+        title: `Réservé (${email || 'client'})`,
+        start: startDate.toISOString().split('T')[0],
+        end: endDate.toISOString().split('T')[0],
+      });
+      fs.writeFileSync(filePath, JSON.stringify(bookings, null, 2));
+      console.log('📅 Réservation enregistrée dans bookings.json');
     } catch (err) {
-      console.error('Erreur insertReservation (webhook):', err.message);
+      console.error('Erreur sauvegarde bookings.json :', err.message);
     }
 
-    // Email via Brevo
+    // ----- Email Brevo -----
     if (BREVO_API_KEY && BREVO_SENDER && BREVO_TO) {
       try {
         const payload = {
@@ -97,24 +116,26 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
                         <p>Montant payé : ${montant} €</p>
                         <p>Email client : ${email || 'non fourni'}</p>`
         };
-        await axios.post('https://api.brevo.com/v3/smtp/email', payload, {
+        const resBrevo = await axios.post('https://api.brevo.com/v3/smtp/email', payload, {
           headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json' }
         });
-        console.log('📧 Email Brevo envoyé');
+        console.log('📧 Email Brevo envoyé:', resBrevo.data);
       } catch (err) {
         console.error('❌ Erreur envoi email Brevo :', err.response ? err.response.data : err.message);
       }
+    } else {
+      console.warn('⚠️ Brevo non configuré (API_KEY / SENDER / TO manquant)');
     }
   }
 
   res.json({ received: true });
 });
 
-// ----- Route Stripe Checkout -----
+// ----- Create Checkout Session -----
 app.post('/create-checkout-session', async (req, res) => {
   try {
     const body = req.body || {};
-    const date = body.date || new Date().toISOString();
+    const date = body.date || body.arrivalDate || body.date_debut || new Date().toISOString();
     const logement = (body.logement || 'BLŌM').toString();
     const nuits = parseInt(body.nuits || 1, 10);
 
@@ -124,7 +145,6 @@ app.post('/create-checkout-session', async (req, res) => {
     else if (body.pricePerNight) totalCents = Math.round(parseFloat(body.pricePerNight) * 100 * nuits);
     else return res.status(400).json({ error: 'prix ou total manquant dans la requête' });
 
-    // option test
     if (process.env.TEST_PAYMENT === 'true') totalCents = 100;
 
     const session = await stripe.checkout.sessions.create({
@@ -150,12 +170,13 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// ----- API réservations pour FullCalendar -----
+// ----- API fusion réservations -----
 app.get('/api/reservations/:logement', async (req, res) => {
   try {
     const logement = req.params.logement.toUpperCase();
     const now = new Date().toISOString();
 
+    // PostgreSQL
     const result = await pool.query(
       `SELECT email, date_debut, date_fin
        FROM reservations
@@ -164,20 +185,37 @@ app.get('/api/reservations/:logement', async (req, res) => {
       [logement, now]
     );
 
-    const events = result.rows.map(r => ({
+    const eventsPostgres = result.rows.map(r => ({
       title: `Réservé (${r.email || 'client'})`,
       start: r.date_debut.toISOString().split('T')[0],
       end: r.date_fin.toISOString().split('T')[0]
     }));
 
-    res.json(events);
+    // iCal externe
+    let eventsICal = [];
+    if (CALENDAR_URL) {
+      try {
+        const resIcal = await axios.get(`${CALENDAR_URL}/${logement}.ics`);
+        const ical = require('ical');
+        const data = ical.parseICS(resIcal.data);
+        eventsICal = Object.values(data)
+          .filter(e => e.type === 'VEVENT')
+          .map(e => ({
+            title: e.summary || 'Réservé',
+            start: e.start.toISOString().split('T')[0],
+            end: e.end.toISOString().split('T')[0]
+          }));
+      } catch (err) {
+        console.warn('⚠️ Impossible de charger iCal externe:', err.message);
+      }
+    }
+
+    res.json([...eventsPostgres, ...eventsICal]);
   } catch (err) {
-    console.error('❌ Erreur API réservations :', err.message);
+    console.error('❌ Erreur API réservations fusion:', err.message);
     res.status(500).json({ error: 'Impossible de récupérer les réservations' });
   }
 });
 
-// ----- Start server -----
-app.listen(PORT, () => {
-  console.log(`🚀 livablom-stripe démarré sur PORT=${PORT}`);
-});
+// ----- Démarrage serveur ----
+
