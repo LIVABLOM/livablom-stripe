@@ -14,7 +14,6 @@ const PORT = process.env.PORT || 4000;
 // ----- URLs / Config -----
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://livablom.fr';
 const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
-const CALENDAR_URL = process.env.CALENDAR_URL || ''; // pour futur proxy si nécessaire
 
 const STRIPE_MODE = process.env.STRIPE_MODE || 'test';
 const STRIPE_KEY = STRIPE_MODE === 'live' ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_KEY;
@@ -84,7 +83,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     try { await insertReservation(logement, email, startDate.toISOString(), endDate.toISOString(), montant); }
     catch (err) { console.error('Erreur insertReservation (webhook):', err.message); }
 
-    // Backup bookings.json et blocage calendrier
+    // Backup JSON (optionnel)
     try {
       const filePath = './bookings.json';
       let bookings = {};
@@ -96,7 +95,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         end: endDate.toISOString().split('T')[0],
       });
       fs.writeFileSync(filePath, JSON.stringify(bookings, null, 2));
-      console.log('📅 Réservation enregistrée dans bookings.json');
+      console.log('📅 Réservation sauvegardée aussi dans bookings.json');
     } catch (err) {
       console.error('Erreur sauvegarde bookings.json :', err.message);
     }
@@ -173,41 +172,46 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// ----- iCal dynamique -----
-app.get('/ical/:logement', async (req, res) => {
+// ----- iCal dynamique depuis PostgreSQL -----
+app.get('/ical/:logement.ics', async (req, res) => {
   try {
     const logement = req.params.logement.toUpperCase();
-    const filePath = './bookings.json';
-    let events = [];
 
-    if (fs.existsSync(filePath)) {
-      const bookings = JSON.parse(fs.readFileSync(filePath, 'utf-8') || '{}');
-      if (bookings[logement]) {
-        events = bookings[logement].map(b => ({
-          start: b.start.split('-').map(n => parseInt(n, 10)),
-          end: b.end.split('-').map(n => parseInt(n, 10)),
-          title: b.title
-        }));
-      }
-    }
+    const result = await pool.query(
+      `SELECT date_debut, date_fin 
+       FROM reservations 
+       WHERE logement = $1
+       ORDER BY date_debut ASC`,
+      [logement]
+    );
 
-    // Génère ICS
-    let icsContent = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//LIVABLŌM//FR\n';
-    events.forEach(e => {
-      icsContent += 'BEGIN:VEVENT\n';
-      icsContent += `DTSTART;VALUE=DATE:${e.start.join('')}\n`;
-      icsContent += `DTEND;VALUE=DATE:${e.end.join('')}\n`;
-      icsContent += `SUMMARY:${e.title}\n`;
-      icsContent += 'END:VEVENT\n';
+    let ical = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//LIVABLOM//FR\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\n`;
+
+    result.rows.forEach((row, index) => {
+      const start = new Date(row.date_debut);
+      const end = new Date(row.date_fin);
+
+      const formatDate = (d) => d.toISOString().split('T')[0].replace(/-/g, '');
+
+      ical += `BEGIN:VEVENT\r\n`;
+      ical += `UID:${index}@livablom.fr\r\n`;
+      ical += `DTSTAMP:${formatDate(new Date())}T000000Z\r\n`;
+      ical += `DTSTART;VALUE=DATE:${formatDate(start)}\r\n`;
+      ical += `DTEND;VALUE=DATE:${formatDate(end)}\r\n`;
+      ical += `SUMMARY:Réservé ${logement}\r\n`;
+      ical += `STATUS:CONFIRMED\r\n`;
+      ical += `END:VEVENT\r\n`;
     });
-    icsContent += 'END:VCALENDAR';
 
-    res.setHeader('Content-Type', 'text/calendar');
-    res.send(icsContent);
+    ical += `END:VCALENDAR\r\n`;
+
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=${logement}.ics`);
+    res.send(ical);
 
   } catch (err) {
-    console.error('❌ Erreur ICS :', err.message);
-    res.status(500).send('Erreur ICS');
+    console.error("❌ Erreur génération iCal :", err);
+    res.status(500).send("Erreur génération iCal");
   }
 });
 
