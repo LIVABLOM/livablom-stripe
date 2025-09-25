@@ -1,4 +1,3 @@
-// server.js (CommonJS)
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -13,7 +12,6 @@ const PORT = process.env.PORT || 4000;
 // ----- URLs / Config -----
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://livablom.fr';
 const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
-const CALENDAR_URL = process.env.CALENDAR_URL || '';
 
 const STRIPE_MODE = process.env.STRIPE_MODE || 'test';
 const STRIPE_KEY = STRIPE_MODE === 'live' ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_KEY;
@@ -33,7 +31,6 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-// ----- Fonction insertion réservation -----
 async function insertReservation(logement, email, dateDebut, dateFin, montant) {
   try {
     const result = await pool.query(
@@ -54,7 +51,7 @@ async function insertReservation(logement, email, dateDebut, dateFin, montant) {
 app.use(cors());
 app.use(express.static('public'));
 
-// ----- Webhook Stripe -----
+// ----- Webhook Stripe (raw pour vérifier signature) -----
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
@@ -80,14 +77,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     const endDate = new Date(startDate);
     endDate.setDate(startDate.getDate() + nuits);
 
-    // BDD
-    try {
-      await insertReservation(logement, email, startDate.toISOString(), endDate.toISOString(), montant);
-    } catch (err) {
-      console.error('Erreur insertReservation (webhook):', err.message);
-    }
+    // Insertion en BDD
+    try { await insertReservation(logement, email, startDate.toISOString(), endDate.toISOString(), montant); }
+    catch (err) { console.error('Erreur insertReservation (webhook):', err.message); }
 
-    // Backup bookings.json
+    // Backup bookings.json (optionnel)
     try {
       const filePath = './bookings.json';
       let bookings = {};
@@ -104,7 +98,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       console.error('Erreur sauvegarde bookings.json :', err.message);
     }
 
-    // Email via Brevo
+    // Email Brevo
     if (BREVO_API_KEY && BREVO_SENDER && BREVO_TO) {
       try {
         const payload = {
@@ -118,10 +112,10 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
                         <p>Montant payé : ${montant} €</p>
                         <p>Email client : ${email || 'non fourni'}</p>`
         };
-        await axios.post('https://api.brevo.com/v3/smtp/email', payload, {
+        const resBrevo = await axios.post('https://api.brevo.com/v3/smtp/email', payload, {
           headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json' }
         });
-        console.log('📧 Email Brevo envoyé');
+        console.log('📧 Email Brevo envoyé:', resBrevo.data);
       } catch (err) {
         console.error('❌ Erreur envoi email Brevo :', err.response ? err.response.data : err.message);
       }
@@ -150,8 +144,7 @@ app.post('/create-checkout-session', async (req, res) => {
     else if (body.pricePerNight) totalCents = Math.round(parseFloat(body.pricePerNight) * 100 * nuits);
     else return res.status(400).json({ error: 'prix ou total manquant dans la requête' });
 
-    // option test
-    if (process.env.TEST_PAYMENT === 'true') totalCents = 100;
+    if (process.env.TEST_PAYMENT === 'true') totalCents = 100; // 1 €
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -176,49 +169,20 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// ----- API réservations pour le frontend -----
+// ----- API pour récupérer les réservations (calendrier) -----
 app.get('/api/reservations/:logement', async (req, res) => {
   try {
     const logement = req.params.logement.toUpperCase();
     const result = await pool.query(
-      `SELECT date_debut, date_fin FROM reservations WHERE logement = $1 ORDER BY date_debut ASC`,
+      `SELECT date_debut, date_fin FROM reservations
+       WHERE logement=$1 AND date_fin >= now()
+       ORDER BY date_debut ASC`,
       [logement]
     );
     res.json(result.rows);
   } catch (err) {
-    console.error('❌ Erreur API reservations:', err.message);
-    res.status(500).json({ error: 'Impossible de charger les réservations' });
-  }
-});
-
-// ----- iCal dynamique -----
-app.get('/ical/:logement', async (req, res) => {
-  try {
-    const logement = req.params.logement.toUpperCase();
-    const result = await pool.query(
-      `SELECT date_debut, date_fin, email FROM reservations WHERE logement = $1 ORDER BY date_debut ASC`,
-      [logement]
-    );
-
-    let icsContent = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//LIVABLŌM//FR\n';
-    result.rows.forEach(r => {
-      const start = r.date_debut.toISOString().split('T')[0].replace(/-/g,'');
-      const end = r.date_fin.toISOString().split('T')[0].replace(/-/g,'');
-      const title = `Réservé (${r.email || 'client'})`;
-      icsContent += 'BEGIN:VEVENT\n';
-      icsContent += `DTSTART;VALUE=DATE:${start}\n`;
-      icsContent += `DTEND;VALUE=DATE:${end}\n`;
-      icsContent += `SUMMARY:${title}\n`;
-      icsContent += 'END:VEVENT\n';
-    });
-    icsContent += 'END:VCALENDAR';
-
-    res.setHeader('Content-Type', 'text/calendar');
-    res.send(icsContent);
-
-  } catch (err) {
-    console.error('❌ Erreur ICS :', err.message);
-    res.status(500).send('Erreur ICS');
+    console.error('❌ Erreur API reservations :', err.message);
+    res.status(500).json({ error: 'Impossible de récupérer les réservations.' });
   }
 });
 
