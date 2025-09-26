@@ -1,4 +1,4 @@
-// server.js (CommonJS)
+// server.js
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -10,11 +10,9 @@ const { Pool } = require('pg');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ----- URLs / Config -----
+// ----- Config -----
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://livablom.fr';
 const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
-const CALENDAR_URL = process.env.CALENDAR_URL || ''; // pour futur proxy si nécessaire
-
 const STRIPE_MODE = process.env.STRIPE_MODE || 'test';
 const STRIPE_KEY = STRIPE_MODE === 'live' ? process.env.STRIPE_SECRET_KEY : process.env.STRIPE_TEST_KEY;
 const STRIPE_WEBHOOK_SECRET = STRIPE_MODE === 'live' ? process.env.STRIPE_WEBHOOK_SECRET : process.env.STRIPE_WEBHOOK_TEST_SECRET;
@@ -24,7 +22,7 @@ const BREVO_SENDER = process.env.BREVO_SENDER;
 const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || 'LIVABLŌM';
 const BREVO_TO = process.env.BREVO_TO;
 
-// ----- Stripe init -----
+// ----- Stripe -----
 const stripe = Stripe(STRIPE_KEY);
 
 // ----- PostgreSQL -----
@@ -33,7 +31,6 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-// ----- Fonctions BDD -----
 async function insertReservation(logement, email, dateDebut, dateFin, montant) {
   try {
     const result = await pool.query(
@@ -53,9 +50,8 @@ async function insertReservation(logement, email, dateDebut, dateFin, montant) {
 // ----- Middlewares -----
 app.use(cors());
 app.use(express.static('public'));
-app.use(express.json());
 
-// ----- Webhook Stripe (DOIT rester AVANT express.json()) -----
+// ----- Webhook Stripe (doit rester avant express.json) -----
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
@@ -81,11 +77,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     const endDate = new Date(startDate);
     endDate.setDate(startDate.getDate() + nuits);
 
-    // Enregistrement en BDD
+    // Enregistrer en BDD
     try { await insertReservation(logement, email, startDate.toISOString(), endDate.toISOString(), montant); }
     catch (err) { console.error('Erreur insertReservation (webhook):', err.message); }
 
-    // Backup bookings.json (optionnel)
+    // Backup bookings.json pour iCal
     try {
       const filePath = './bookings.json';
       let bookings = {};
@@ -99,10 +95,10 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       fs.writeFileSync(filePath, JSON.stringify(bookings, null, 2));
       console.log('📅 Réservation enregistrée dans bookings.json');
     } catch (err) {
-      console.error('Erreur sauvegarde bookings.json :', err.message);
+      console.error('❌ Erreur sauvegarde bookings.json :', err.message);
     }
 
-    // Email via Brevo
+    // Email Brevo
     if (BREVO_API_KEY && BREVO_SENDER && BREVO_TO) {
       try {
         const payload = {
@@ -131,21 +127,21 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   res.json({ received: true });
 });
 
+// ----- Express.json pour les autres routes -----
+app.use(express.json());
+
 // ----- Create Checkout Session -----
 app.post('/create-checkout-session', async (req, res) => {
   try {
     const body = req.body || {};
-    const date = body.date || body.arrivalDate || body.date_debut || new Date().toISOString();
+    const date = body.date || new Date().toISOString();
     const logement = (body.logement || 'BLŌM').toString();
     const nuits = parseInt(body.nuits || 1, 10);
+    let totalCents = body.total ? Math.round(parseFloat(body.total) * 100) :
+                     body.prix ? Math.round(parseFloat(body.prix) * 100 * nuits) :
+                     0;
 
-    let totalCents = 0;
-    if (body.total) totalCents = Math.round(parseFloat(body.total) * 100);
-    else if (body.prix) totalCents = Math.round(parseFloat(body.prix) * 100 * nuits);
-    else if (body.pricePerNight) totalCents = Math.round(parseFloat(body.pricePerNight) * 100 * nuits);
-    else return res.status(400).json({ error: 'prix ou total manquant dans la requête' });
-
-    // option test
+    // Paiement test forcé
     if (process.env.TEST_PAYMENT === 'true') totalCents = 100;
 
     const session = await stripe.checkout.sessions.create({
@@ -171,26 +167,41 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// ----- Route pour calendrier dynamique -----
-app.get('/api/reservations/:logement', async (req, res) => {
-  const logement = req.params.logement.toUpperCase();
+// ----- iCal dynamique -----
+app.get('/ical/:logement', async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT date_debut AS start, date_fin AS end
-       FROM reservations
-       WHERE logement = $1
-       ORDER BY date_debut ASC`,
-      [logement]
-    );
-    const bookings = result.rows.map(r => ({
-      start: r.start.toISOString().split('T')[0],
-      end: r.end.toISOString().split('T')[0],
-      title: 'Réservé'
-    }));
-    res.json(bookings);
+    const logement = req.params.logement.toUpperCase();
+    const filePath = './bookings.json';
+    let events = [];
+
+    if (fs.existsSync(filePath)) {
+      const bookings = JSON.parse(fs.readFileSync(filePath, 'utf-8') || '{}');
+      if (bookings[logement]) {
+        events = bookings[logement].map(b => ({
+          start: b.start.split('-').map(n => parseInt(n, 10)),
+          end: b.end.split('-').map(n => parseInt(n, 10)),
+          title: b.title
+        }));
+      }
+    }
+
+    // Génère ICS
+    let icsContent = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//LIVABLŌM//FR\n';
+    events.forEach(e => {
+      icsContent += 'BEGIN:VEVENT\n';
+      icsContent += `DTSTART;VALUE=DATE:${e.start.join('')}\n`;
+      icsContent += `DTEND;VALUE=DATE:${e.end.join('')}\n`;
+      icsContent += `SUMMARY:${e.title}\n`;
+      icsContent += 'END:VEVENT\n';
+    });
+    icsContent += 'END:VCALENDAR';
+
+    res.setHeader('Content-Type', 'text/calendar');
+    res.send(icsContent);
+
   } catch (err) {
-    console.error('❌ Erreur récupération réservations :', err.message);
-    res.status(500).json({ error: 'Impossible de récupérer les réservations.' });
+    console.error('❌ Erreur ICS :', err.message);
+    res.status(500).send('Erreur ICS');
   }
 });
 
