@@ -1,10 +1,10 @@
 name: Update package-lock.json
 
 on:
-  workflow_dispatch: # permet de lancer manuellement
+  workflow_dispatch:
   push:
     branches:
-      - main   # se déclenche à chaque push sur main
+      - main
 
 jobs:
   update-lockfile:
@@ -13,7 +13,21 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Commit updated package-lock.json
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git diff --quiet && echo "No changes to commit" || git commit -m "Update package-lock.json via GitHub Action"
+          git push
