@@ -1,7 +1,10 @@
 name: Update package-lock.json
 
 on:
-  workflow_dispatch: # permet de lancer manuellement le workflow
+  workflow_dispatch: # permet de lancer manuellement
+  push:
+    branches:
+      - main   # se déclenche à chaque push sur main
 
 jobs:
   update-lockfile:
