@@ -123,4 +123,53 @@ app.post("/create-checkout-session", async (req, res) => {
 
 // ✅ API pour récupérer les réservations locales + externes
 app.get("/api/reservations/:logement", async (req, res) => {
-  const logement = req.params.logement.toUpp
+  const logement = req.params.logement.toUpperCase();
+  try {
+    // --- 1. Récupérer réservations locales (Postgres)
+    const result = await pool.query(
+      "SELECT date_debut, date_fin FROM reservations WHERE logement = $1",
+      [logement]
+    );
+    const localRes = result.rows.map(r => ({
+      start: new Date(r.date_debut).toISOString().split("T")[0],
+      end: new Date(r.date_fin).toISOString().split("T")[0],
+      source: "Stripe",
+    }));
+
+    // --- 2. Récupérer réservations externes (iCal)
+    const urls = ICAL_URLS[logement] || [];
+    let externalRes = [];
+
+    for (const url of urls) {
+      try {
+        const data = await ical.async.fromURL(url);
+        for (const k in data) {
+          const ev = data[k];
+          if (ev.type === "VEVENT") {
+            externalRes.push({
+              start: ev.start.toISOString().split("T")[0],
+              end: ev.end.toISOString().split("T")[0],
+              source: "iCal",
+            });
+          }
+        }
+      } catch (err) {
+        console.error(`❌ Erreur iCal (${url}):`, err.message);
+      }
+    }
+
+    // --- 3. Fusionner et renvoyer
+    const allRes = [...localRes, ...externalRes];
+    res.json(allRes);
+  } catch (err) {
+    console.error("❌ Erreur récupération réservations :", err);
+    res.status(500).json({ error: "Impossible de récupérer les réservations" });
+  }
+});
+
+// ✅ Start server
+app.listen(PORT, () => {
+  console.log(
+    `🚀 livablom-stripe démarré. BACKEND_URL=${BACKEND_URL} FRONTEND_URL=${FRONTEND_URL}`
+  );
+});
