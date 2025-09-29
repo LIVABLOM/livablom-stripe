@@ -5,6 +5,7 @@ const bodyParser = require("body-parser");
 const Stripe = require("stripe");
 const dotenv = require("dotenv");
 const { Pool } = require("pg");
+const ical = require("node-ical"); // <--- ajout
 
 dotenv.config();
 
@@ -21,6 +22,17 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
+
+// ✅ URLs iCal (remplacer par tes vrais liens Airbnb/Booking)
+const ICAL_URLS = {
+  BLOM: [
+    "https://www.airbnb.com/calendar/ical/xxxxx.ics",
+    "https://www.booking.com/calendar/ical/yyyyy.ics",
+  ],
+  LIVA: [
+    "https://www.airbnb.com/calendar/ical/zzzzz.ics",
+  ],
+};
 
 // ✅ CORS autorisé uniquement depuis ton frontend
 app.use(
@@ -54,14 +66,12 @@ app.post(
       const session = event.data.object;
 
       try {
-        // Récupérer les metadata
         const logement = session.metadata.logement;
         const date_debut = session.metadata.date;
         const nuits = parseInt(session.metadata.nuits, 10);
         const dateFin = new Date(date_debut);
         dateFin.setDate(dateFin.getDate() + nuits);
 
-        // Sauvegarde en BDD
         await pool.query(
           `INSERT INTO reservations (logement, date_debut, date_fin, montant) 
            VALUES ($1, $2, $3, $4)`,
@@ -111,24 +121,6 @@ app.post("/create-checkout-session", async (req, res) => {
   }
 });
 
-// ✅ API pour récupérer les réservations depuis PostgreSQL
+// ✅ API pour récupérer les réservations locales + externes
 app.get("/api/reservations/:logement", async (req, res) => {
-  try {
-    const logement = req.params.logement.toUpperCase();
-    const result = await pool.query(
-      "SELECT date_debut, date_fin FROM reservations WHERE logement = $1",
-      [logement]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error("❌ Erreur récupération réservations :", err);
-    res.status(500).json({ error: "Impossible de récupérer les réservations" });
-  }
-});
-
-// ✅ Start server
-app.listen(PORT, () => {
-  console.log(
-    `🚀 livablom-stripe démarré. BACKEND_URL=${BACKEND_URL} FRONTEND_URL=${FRONTEND_URL}`
-  );
-});
+  const logement = req.params.logement.toUpp
