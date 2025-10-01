@@ -5,7 +5,7 @@ const cors = require("cors");
 const { Pool } = require("pg");
 
 // --- Mode Stripe ---
-const isTest = process.env.STRIPE_MODE === "test";
+const isTest = true; // force mode test
 const stripeKey = isTest ? process.env.STRIPE_TEST_KEY : process.env.STRIPE_SECRET_KEY;
 const stripeWebhookSecret = isTest ? process.env.STRIPE_WEBHOOK_TEST_SECRET : process.env.STRIPE_WEBHOOK_SECRET;
 
