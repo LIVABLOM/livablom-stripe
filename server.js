@@ -4,22 +4,16 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 const { Pool } = require("pg");
 
-// --- Choix de la clé Stripe selon le mode ---
-const stripeKey =
-  process.env.STRIPE_MODE === "test"
-    ? process.env.STRIPE_TEST_KEY
-    : process.env.STRIPE_SECRET_KEY;
-const stripeWebhookSecret =
-  process.env.STRIPE_MODE === "test"
-    ? process.env.STRIPE_WEBHOOK_TEST_SECRET
-    : process.env.STRIPE_WEBHOOK_SECRET;
-
+// --- Choix automatique des clés Stripe selon le mode ---
+const isTest = process.env.STRIPE_MODE === "test";
+const stripeKey = isTest ? process.env.STRIPE_TEST_KEY : process.env.STRIPE_SECRET_KEY;
+const stripeWebhookSecret = isTest ? process.env.STRIPE_WEBHOOK_TEST_SECRET : process.env.STRIPE_WEBHOOK_SECRET;
 const stripe = require("stripe")(stripeKey);
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// --- Config BDD Postgres ---
+// --- PostgreSQL ---
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
@@ -91,8 +85,8 @@ app.post("/api/checkout", async (req, res) => {
   try {
     let { logement, startDate, endDate, amount } = req.body;
 
-    // Pour test simple : override avec 1 € si TEST_PAYMENT=true
-    if (process.env.TEST_PAYMENT === "true") amount = 1;
+    // Mode test : override montant avec 1 € si TEST_PAYMENT=true
+    if (isTest && process.env.TEST_PAYMENT === "true") amount = 1;
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -101,7 +95,7 @@ app.post("/api/checkout", async (req, res) => {
           price_data: {
             currency: "eur",
             product_data: { name: `Réservation ${logement}` },
-            unit_amount: amount * 100, // montant en centimes
+            unit_amount: amount * 100, // centimes
           },
           quantity: 1,
         },
@@ -125,5 +119,5 @@ app.post("/api/checkout", async (req, res) => {
 
 // --- Démarrage serveur ---
 app.listen(port, () => {
-  console.log(`🚀 Serveur lancé sur port ${port} en mode ${process.env.STRIPE_MODE}`);
+  console.log(`🚀 Serveur lancé sur port ${port} en mode ${isTest ? "TEST" : "PRODUCTION"}`);
 });
