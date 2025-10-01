@@ -9,18 +9,6 @@ const ical = require("node-ical");
 const fetch = require("node-fetch");
 
 const app = express();
-app.use(cors());
-app.use(bodyParser.json());
-
-// --- PostgreSQL ---// server.js (CommonJS)
-
-const express = require("express");
-const bodyParser = require("body-parser");
-const cors = require("cors");
-const { Pool } = require("pg");
-const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-
-const app = express();
 const port = process.env.PORT || 3000;
 
 // --- Config BDD Postgres ---
@@ -38,10 +26,10 @@ app.use(
   })
 );
 
-// --- Middleware normal pour JSON ---
+// --- Middleware JSON ---
 app.use(bodyParser.json());
 
-// --- Middleware spécial pour Stripe Webhook (raw body obligatoire) ---
+// --- Stripe Webhook (raw body obligatoire) ---
 app.post(
   "/webhook",
   bodyParser.raw({ type: "application/json" }),
@@ -51,7 +39,7 @@ app.post(
 
     try {
       event = stripe.webhooks.constructEvent(
-        req.body, // Buffer brut
+        req.body,
         sig,
         process.env.STRIPE_WEBHOOK_SECRET
       );
@@ -60,7 +48,6 @@ app.post(
       return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-    // --- Événement checkout.session.completed ---
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
       const logement = session.metadata.logement;
@@ -72,7 +59,7 @@ app.post(
           "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
           [logement, date_debut, date_fin]
         );
-        console.log("✅ Réservation ajoutée en BDD:", logement, date_debut, date_fin);
+        console.log("✅ Réservation ajoutée:", logement, date_debut, date_fin);
       } catch (dbErr) {
         console.error("❌ Erreur insertion BDD:", dbErr);
       }
@@ -82,7 +69,7 @@ app.post(
   }
 );
 
-// --- Endpoint pour récupérer les réservations d’un logement ---
+// --- Récupération des réservations ---
 app.get("/api/reservations/:logement", async (req, res) => {
   const { logement } = req.params;
 
@@ -92,7 +79,6 @@ app.get("/api/reservations/:logement", async (req, res) => {
       [logement]
     );
 
-    // Transformer en format utilisable par FullCalendar
     const events = result.rows.map((r) => ({
       start: r.date_debut,
       end: r.date_fin,
@@ -106,16 +92,6 @@ app.get("/api/reservations/:logement", async (req, res) => {
     console.error("❌ Erreur récupération réservations:", err);
     res.status(500).json({ error: "Impossible de charger les réservations" });
   }
-});
-
-// --- Démarrage ---
-app.listen(port, () => {
-  console.log(`🚀 Serveur lancé sur port ${port}`);
-});
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
 });
 
 // --- Stripe Checkout ---
@@ -135,4 +111,20 @@ app.post("/api/checkout", async (req, res) => {
           quantity: 1,
         },
       ],
-      m
+      mode: "payment",
+      success_url: `${process.env.FRONTEND_URL}/success`,
+      cancel_url: `${process.env.FRONTEND_URL}/cancel`,
+      metadata: { logement, date_debut: startDate, date_fin: endDate },
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("❌ Erreur création session Stripe:", err);
+    res.status(500).json({ error: "Erreur lors de la création du paiement" });
+  }
+});
+
+// --- Lancement du serveur ---
+app.listen(port, () => {
+  console.log(`🚀 Serveur lancé sur port ${port}`);
+});
