@@ -1,13 +1,9 @@
+// calendar/server.js
 const express = require("express");
 const fetch = require("node-fetch");
 const ical = require("ical");
-const cors = require("cors");
 
-const app = express();
-const PORT = process.env.PORT || 4000;
-
-// Autoriser toutes les requêtes CORS
-app.use(cors());
+const router = express.Router();
 
 // URLs iCal pour chaque logement
 const calendars = {
@@ -45,7 +41,7 @@ async function fetchICal(url, logement) {
 }
 
 // Endpoint pour un logement précis (BLŌM ou LIVA)
-app.get("/api/reservations/:logement", async (req, res) => {
+router.get("/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
   if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
 
@@ -63,7 +59,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
 });
 
 // Endpoint global (optionnel, retourne tout)
-app.get("/api/reservations", async (req, res) => {
+router.get("/reservations", async (req, res) => {
   try {
     let events = [];
     for (const logement of Object.keys(calendars)) {
@@ -79,4 +75,4 @@ app.get("/api/reservations", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Proxy calendrier lancé sur le port ${PORT}`));
+module.exports = router;
