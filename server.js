@@ -1,62 +1,99 @@
-// === Charger .env en priorité ===
-const path = require("path");
-require("dotenv").config({ path: path.resolve(__dirname, ".env") });
-
+// === Dépendances ===
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
+const dotenv = require("dotenv");
 const { Pool } = require("pg");
 const stripeLib = require("stripe");
 const fetch = require("node-fetch");
 const ical = require("ical");
 
-// --- Forcer le mode test local ---
-const NODE_ENV = process.env.NODE_ENV || "development";
-let STRIPE_MODE = process.env.STRIPE_MODE || "test";
-if (NODE_ENV === "development") STRIPE_MODE = "test";
+// Charger .env
+dotenv.config();
 
-const isTest = STRIPE_MODE === "test";
-const stripeKey = isTest ? process.env.STRIPE_TEST_KEY : process.env.STRIPE_SECRET_KEY;
-const stripeWebhookSecret = isTest
-  ? process.env.STRIPE_WEBHOOK_TEST_SECRET
-  : process.env.STRIPE_WEBHOOK_SECRET;
+// === Variables ===
+const port = process.env.PORT || 3000;
+const NODE_ENV = process.env.NODE_ENV || "production";
+const STRIPE_MODE = process.env.STRIPE_MODE || "live";
 
+const stripeKey =
+  STRIPE_MODE === "test" ? process.env.STRIPE_TEST_KEY : process.env.STRIPE_SECRET_KEY;
+const stripeWebhookSecret =
+  STRIPE_MODE === "test"
+    ? process.env.STRIPE_WEBHOOK_TEST_SECRET
+    : process.env.STRIPE_WEBHOOK_SECRET;
+
+const frontendUrl = process.env.FRONTEND_URL || "http://localhost:4000";
 const stripe = stripeLib(stripeKey);
 
-console.log(`🚀 Node env: ${NODE_ENV}`);
-console.log(`🚀 Stripe mode: ${isTest ? "TEST" : "PROD"}`);
-console.log(`🚀 Clé Stripe utilisée: ${stripeKey.substring(0, 10)}...`);
-console.log(`🔹 DATABASE_URL utilisée : ${process.env.DATABASE_URL}`);
+// Logs au démarrage
+console.log("🚀 Node env:", NODE_ENV);
+console.log("🚀 Stripe mode:", STRIPE_MODE.toUpperCase());
+console.log("🚀 Clé Stripe utilisée:", stripeKey ? stripeKey.substring(0, 10) + "..." : "⚠️ Aucune");
 
-// --- Express ---
-const app = express();
-const port = process.env.PORT || 3000;
-
-// --- PostgreSQL local sans SSL ---
+// === PostgreSQL (Railway : SSL obligatoire) ===
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: false, // <--- IMPORTANT pour local
+  ssl: { rejectUnauthorized: false },
 });
 
-// Test connexion
 pool.connect()
-  .then(client => {
-    console.log("✅ Connexion PostgreSQL OK !");
-    return client.query("SELECT current_database(), current_schema()")
-      .then(res => {
-        console.log("📊 Base et schéma courant :", res.rows);
-        client.release();
-      });
-  })
-  .catch(err => console.error("❌ Erreur connexion PostgreSQL :", err));
+  .then(() => console.log("✅ Connecté à PostgreSQL"))
+  .catch(err => console.error("❌ Erreur connexion BDD:", err));
 
-// --- iCal URLs ---
+// === Express ===
+const app = express();
+
+// ⚠️ Webhook Stripe : doit être AVANT le middleware JSON
+app.post(
+  "/webhook",
+  bodyParser.raw({ type: "application/json" }),
+  async (req, res) => {
+    const sig = req.headers["stripe-signature"];
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
+      console.log(`✅ Webhook reçu : ${event.type}`);
+    } catch (err) {
+      console.error("❌ Erreur signature webhook:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      try {
+        await pool.query(
+          "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
+          [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
+        );
+        console.log(
+          `📝 Réservation ajoutée : ${session.metadata.logement} (${session.metadata.date_debut} → ${session.metadata.date_fin})`
+        );
+      } catch (dbErr) {
+        console.error("❌ Erreur insertion BDD:", dbErr);
+      }
+    }
+
+    res.json({ received: true });
+  }
+);
+
+// === Middlewares globaux (après webhook) ===
+app.use(cors());
+app.use(bodyParser.json());
+
+// === iCal (Airbnb / Booking) ===
 const calendars = {
-  LIVA: [ /* ... tes URLs ... */ ],
-  BLOM: [ /* ... tes URLs ... */ ]
+  LIVA: [
+    // "https://airbnb.com/calendar.ics?...",
+    // "https://booking.com/calendar.ics?..."
+  ],
+  BLOM: [
+    // idem pour Blom
+  ]
 };
 
-// --- Fonction fetch iCal ---
 async function fetchICal(url, logement) {
   try {
     const res = await fetch(url);
@@ -66,55 +103,28 @@ async function fetchICal(url, logement) {
     return Object.values(parsed)
       .filter(ev => ev.start && ev.end)
       .map(ev => ({
-        summary: ev.summary || "Réservé",
+        title: ev.summary || "Réservé (iCal)",
         start: ev.start,
         end: ev.end,
         logement,
+        display: "background",
+        color: "#ff0000",
       }));
   } catch (err) {
-    console.error("Erreur iCal pour", url, err);
+    console.error("❌ Erreur iCal pour", logement, url, err);
     return [];
   }
 }
 
-// --- Webhook Stripe doit être avant bodyParser.json() ---
-app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, res) => {
-  const sig = req.headers["stripe-signature"];
-  let event;
+// === Endpoints réservation ===
 
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
-  } catch (err) {
-    console.error("⚠️ Erreur webhook signature:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
-    try {
-      await pool.query(
-        "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
-        [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
-      );
-      console.log(`✅ Réservation ajoutée en BDD: ${session.metadata.logement} du ${session.metadata.date_debut} au ${session.metadata.date_fin}`);
-    } catch (dbErr) {
-      console.error("❌ Erreur insertion BDD:", dbErr);
-    }
-  }
-
-  res.json({ received: true });
-});
-
-// --- Middleware global après webhook ---
-app.use(cors());
-app.use(bodyParser.json());
-
-// --- Endpoint BDD + iCal pour un logement ---
+// Reservations d’un logement
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
   if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
 
   try {
+    // BDD
     const result = await pool.query(
       "SELECT date_debut, date_fin FROM reservations WHERE logement = $1",
       [logement]
@@ -122,11 +132,12 @@ app.get("/api/reservations/:logement", async (req, res) => {
     let events = result.rows.map(r => ({
       start: r.date_debut,
       end: r.date_fin,
+      title: "Réservé (BDD)",
       display: "background",
       color: "#ff0000",
-      title: "Réservé (BDD)",
     }));
 
+    // iCal
     for (const url of calendars[logement]) {
       const icalEvents = await fetchICal(url, logement);
       events = events.concat(icalEvents);
@@ -134,12 +145,12 @@ app.get("/api/reservations/:logement", async (req, res) => {
 
     res.json(events);
   } catch (err) {
-    console.error("❌ Erreur récupération fusionnée:", err);
+    console.error("❌ Erreur récupération réservations:", err);
     res.status(500).json({ error: "Impossible de charger les réservations" });
   }
 });
 
-// --- Endpoint global fusionné ---
+// Toutes réservations fusionnées
 app.get("/api/reservations", async (req, res) => {
   try {
     let events = [];
@@ -151,9 +162,9 @@ app.get("/api/reservations", async (req, res) => {
       const bddEvents = result.rows.map(r => ({
         start: r.date_debut,
         end: r.date_fin,
+        title: "Réservé (BDD)",
         display: "background",
         color: "#ff0000",
-        title: "Réservé (BDD)",
       }));
       events = events.concat(bddEvents);
 
@@ -169,7 +180,7 @@ app.get("/api/reservations", async (req, res) => {
   }
 });
 
-// --- Endpoint Stripe Checkout ---
+// === Stripe Checkout ===
 app.post("/api/checkout", async (req, res) => {
   try {
     const { logement, startDate, endDate, amount } = req.body;
@@ -188,12 +199,12 @@ app.post("/api/checkout", async (req, res) => {
         },
       ],
       mode: "payment",
-      success_url: `${process.env.FRONTEND_URL}/blom/merci`,
-      cancel_url: `${process.env.FRONTEND_URL}/blom/annule`,
+      success_url: `${frontendUrl}/merci`,
+      cancel_url: `${frontendUrl}/annule`,
       metadata: { logement, date_debut: startDate, date_fin: endDate },
     });
 
-    console.log(`📅 Création session: ${logement} du ${startDate} au ${endDate} pour ${montantFinal} €`);
+    console.log(`📅 Session Stripe: ${logement} ${startDate}→${endDate} (${montantFinal}€)`);
     res.json({ url: session.url });
   } catch (err) {
     console.error("❌ Erreur création session Stripe:", err);
@@ -201,7 +212,12 @@ app.post("/api/checkout", async (req, res) => {
   }
 });
 
-// --- Démarrage serveur ---
+// === Route test ===
+app.get("/", (req, res) => {
+  res.send("🚀 API LIVABLŌM opérationnelle !");
+});
+
+// === Démarrage serveur ===
 app.listen(port, () => {
-  console.log(`🚀 Serveur lancé sur port ${port} en ${NODE_ENV} | Stripe: ${isTest ? "TEST" : "PROD"} | TEST_PAYMENT=${process.env.TEST_PAYMENT}`);
+  console.log(`✅ Serveur lancé sur port ${port} | ENV=${NODE_ENV} | Stripe=${STRIPE_MODE}`);
 });
