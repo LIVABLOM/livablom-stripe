@@ -205,4 +205,3 @@ app.post("/api/checkout", async (req, res) => {
 app.listen(port, () => {
   console.log(`🚀 Serveur lancé sur port ${port} en ${NODE_ENV} | Stripe: ${isTest ? "TEST" : "PROD"} | TEST_PAYMENT=${process.env.TEST_PAYMENT}`);
 });
- 
