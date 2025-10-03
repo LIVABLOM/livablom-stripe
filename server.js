@@ -51,8 +51,9 @@ const calendars = {
   ]
 };
 
-// --- Fonction fetch iCal avec User-Agent navigateur ---
+// --- Fonction fetch iCal avec logs détaillés ---
 async function fetchICal(url, logement) {
+  console.log(`🔹 Tentative fetch iCal pour ${logement}: ${url}`);
   try {
     const res = await fetch(url, {
       headers: {
@@ -63,6 +64,8 @@ async function fetchICal(url, logement) {
       }
     });
 
+    console.log(`➡ HTTP ${res.status} pour ${url}`);
+
     if (!res.ok) {
       console.error(`❌ Erreur fetch iCal ${url}: HTTP ${res.status}`);
       return [];
@@ -70,8 +73,7 @@ async function fetchICal(url, logement) {
 
     const data = await res.text();
     const parsed = ical.parseICS(data);
-
-    return Object.values(parsed)
+    const events = Object.values(parsed)
       .filter(ev => ev.start && ev.end)
       .map(ev => ({
         title: ev.summary || "Réservé (iCal)",
@@ -81,8 +83,11 @@ async function fetchICal(url, logement) {
         display: "background",
         color: "#ff0000"
       }));
+
+    console.log(`✅ ${events.length} événements récupérés depuis ${url}`);
+    return events;
   } catch (err) {
-    console.error("❌ Erreur iCal pour", logement, url, err);
+    console.error(`❌ Erreur iCal pour ${logement} depuis ${url}:`, err);
     return [];
   }
 }
