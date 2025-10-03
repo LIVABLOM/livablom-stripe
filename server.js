@@ -51,10 +51,23 @@ const calendars = {
   ]
 };
 
-// --- Fonction fetch iCal ---
+// --- Fonction fetch iCal avec User-Agent navigateur ---
 async function fetchICal(url, logement) {
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+          "(KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+        "Accept": "text/calendar, text/plain, */*"
+      }
+    });
+
+    if (!res.ok) {
+      console.error(`❌ Erreur fetch iCal ${url}: HTTP ${res.status}`);
+      return [];
+    }
+
     const data = await res.text();
     const parsed = ical.parseICS(data);
 
