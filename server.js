@@ -63,7 +63,7 @@ async function fetchICal(url, logement) {
 const brevoApiKey = process.env.CLÉ_API_BREVO || process.env.BREVO_API_KEY;
 const brevoSender = process.env.BREVO_SENDER || "contact@livablom.fr";
 const brevoSenderName = process.env.BREVO_SENDER_NAME || "LIVABLOM";
-const brevoAdminTo = process.env.BREVO_TO || "";
+const brevoAdminTo = process.env.BREVO_TO || "livablom59@gmail.com";
 
 if (!brevoApiKey) {
   console.warn("⚠️ Clé Brevo introuvable, emails non envoyés.");
