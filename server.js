@@ -1,4 +1,5 @@
-// server.js
+// server.js Force commit pour mise à jour du serveur
+
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
 
