@@ -14,10 +14,11 @@
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
     "ical": "^0.8.0",
-    "node-ical": "^0.17.0",
     "node-fetch": "^2.7.0",
+    "node-ical": "^0.17.0",
     "nodemailer": "^7.0.6",
     "pg": "^8.11.3",
+    "sib-api-v3-sdk": "^8.5.0",
     "stripe": "^12.18.0"
   },
   "devDependencies": {
