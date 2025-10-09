@@ -224,7 +224,7 @@ app.post("/api/checkout", async (req, res) => {
   }
 });
 
-// --- Route test ---
+// --- Route test ----
 app.get("/", (req, res) => res.send("🚀 API LIVABLŌM opérationnelle avec emails Brevo !"));
 
 app.listen(port, () => {
