@@ -1,4 +1,4 @@
-// server.js Force commit pour mise à jour du serveur
+// server.js — version stable LIVABLŌM
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
@@ -10,7 +10,7 @@ const { Pool } = require("pg");
 const stripeLib = require("stripe");
 const ical = require("ical");
 const fetch = require("node-fetch");
-const SibApiV3Sdk = require('sib-api-v3-sdk');
+const SibApiV3Sdk = require("sib-api-v3-sdk");
 
 // --- Variables ---
 const NODE_ENV = process.env.NODE_ENV || "development";
@@ -22,7 +22,7 @@ const port = process.env.PORT || 3000;
 
 const stripe = stripeLib(stripeKey);
 
-// --- Postgres ---
+// --- PostgreSQL ---
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || process.env.URL_BASE_DE_DONNÉES,
   ssl: { rejectUnauthorized: false },
@@ -35,7 +35,7 @@ pool.connect()
 // --- Google Calendar ---
 const calendars = {
   LIVA: ["https://calendar.google.com/calendar/ical/.../basic.ics"],
-  BLOM: ["https://calendar.google.com/calendar/ical/.../basic.ics"]
+  BLOM: ["https://calendar.google.com/calendar/ical/.../basic.ics"],
 };
 
 async function fetchICal(url, logement) {
@@ -52,7 +52,7 @@ async function fetchICal(url, logement) {
         end: ev.end,
         logement,
         display: "background",
-        color: "#ff0000"
+        color: "#ff0000",
       }));
   } catch (err) {
     console.error("❌ Erreur iCal pour", logement, url, err);
@@ -63,26 +63,25 @@ async function fetchICal(url, logement) {
 // --- Brevo ---
 const brevoApiKey = process.env.CLÉ_API_BREVO || process.env.BREVO_API_KEY;
 const brevoSender = process.env.BREVO_SENDER || "contact@livablom.fr";
-const brevoSenderName = process.env.BREVO_SENDER_NAME || "LIVABLOM";
+const brevoSenderName = process.env.BREVO_SENDER_NAME || "LIVABLŌM";
 const brevoAdminTo = process.env.BREVO_TO || "livablom59@gmail.com";
 
 if (!brevoApiKey) {
   console.warn("⚠️ Clé Brevo introuvable, emails non envoyés.");
 } else {
   const client = SibApiV3Sdk.ApiClient.instance;
-  client.authentications['api-key'].apiKey = brevoApiKey;
+  client.authentications["api-key"].apiKey = brevoApiKey;
 }
 
 async function sendConfirmationEmail({ name, email, logement, startDate, endDate, personnes }) {
   if (!brevoApiKey) return;
-
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
   // Email client
   try {
     await tranEmailApi.sendTransacEmail({
       sender: { name: brevoSenderName, email: brevoSender },
-      to: [{ email: email, name: name || "" }],
+      to: [{ email, name: name || "" }],
       subject: `Confirmation de réservation ${logement} - LIVABLŌM`,
       htmlContent: `
         <div style="font-family:Arial, sans-serif; color:#222;">
@@ -93,7 +92,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
           <p><strong>Nombre de personnes :</strong> ${personnes || ""}</p>
           <p>Cordialement,<br/>L’équipe LIVABLŌM</p>
         </div>
-      `
+      `,
     });
     console.log("✉️ Email client envoyé :", email);
   } catch (err) {
@@ -116,7 +115,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
             <p><strong>Dates :</strong> ${startDate} au ${endDate}</p>
             <p><strong>Nombre de personnes :</strong> ${personnes || ""}</p>
           </div>
-        `
+        `,
       });
       console.log("✉️ Email admin envoyé à :", brevoAdminTo);
     } catch (err) {
@@ -128,7 +127,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
 // --- Express ---
 const app = express();
 
-// Webhook Stripe
+// ⚠️ Webhook Stripe : corps brut requis
 app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
@@ -139,39 +138,39 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
+  console.log("📦 Webhook Stripe reçu :", event.type);
+
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
+    const metadata = session.metadata || {};
+
     try {
-      // BDD
       await pool.query(
         "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
-        [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
+        [metadata.logement, metadata.date_debut, metadata.date_fin]
       );
 
-      // Envoi emails
-      const clientEmail = session.metadata.email || (session.customer_details && session.customer_details.email);
-      const clientName = session.metadata.name || (session.customer_details && session.customer_details.name);
-
       await sendConfirmationEmail({
-        name: clientName,
-        email: clientEmail,
-        logement: session.metadata.logement,
-        startDate: session.metadata.date_debut,
-        endDate: session.metadata.date_fin,
-        personnes: session.metadata.personnes
+        name: metadata.name,
+        email: metadata.email,
+        logement: metadata.logement,
+        startDate: metadata.date_debut,
+        endDate: metadata.date_fin,
+        personnes: metadata.personnes,
       });
     } catch (err) {
-      console.error("❌ Erreur webhook :", err);
+      console.error("❌ Erreur traitement webhook :", err);
     }
   }
 
   res.json({ received: true });
 });
 
+// ✅ Body parser JSON pour le reste
 app.use(cors());
 app.use(bodyParser.json());
 
-// --- Endpoint réservations (BDD + Google) ---
+// --- Réservations (BDD + Google) ---
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
   if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
@@ -184,7 +183,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
       end: r.date_fin,
       display: "background",
       color: "#ff0000",
-      title: "Réservé (BDD)"
+      title: "Réservé (BDD)",
     }));
 
     for (const url of calendars[logement]) {
@@ -211,16 +210,17 @@ app.post("/api/checkout", async (req, res) => {
         price_data: {
           currency: "eur",
           product_data: { name: `Réservation ${logement}` },
-          unit_amount: Math.round(montantFinal * 100)
+          unit_amount: Math.round(montantFinal * 100),
         },
-        quantity: 1
+        quantity: 1,
       }],
       mode: "payment",
       success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
       cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
-      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
+      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone },
     });
 
+    console.log("💳 Session Stripe créée :", session.id);
     res.json({ url: session.url });
   } catch (err) {
     console.error("❌ Erreur création session Stripe:", err);
