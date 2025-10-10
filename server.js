@@ -233,7 +233,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
   }
 });
 
-// --- Stripe Checkout ---
+// --- Stripe Checkout corrigé ---
 app.post("/api/checkout", async (req, res) => {
   try {
     const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
@@ -251,8 +251,8 @@ app.post("/api/checkout", async (req, res) => {
       }],
       mode: "payment",
       customer_email: email,
-      success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
-      cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
+      success_url: encodeURI(`${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`),
+      cancel_url: encodeURI(`${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`),
       metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
     });
 
@@ -263,6 +263,7 @@ app.post("/api/checkout", async (req, res) => {
     res.status(500).json({ error: "Impossible de créer la session Stripe" });
   }
 });
+
 
 // --- Route test ---
 app.get("/", (req, res) => res.send("🚀 API LIVABLŌM opérationnelle !"));
