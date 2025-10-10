@@ -1,4 +1,4 @@
-// server.js — Version stable + email prérempli Stripe + email pro visuel
+// server.js – Version corrigée pré-remplissage email client et email fonctionnel
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
@@ -10,21 +10,21 @@ const { Pool } = require("pg");
 const stripeLib = require("stripe");
 const ical = require("ical");
 const fetch = require("node-fetch");
-const SibApiV3Sdk = require("sib-api-v3-sdk");
+const SibApiV3Sdk = require('sib-api-v3-sdk');
 
 // --- Variables ---
 const NODE_ENV = process.env.NODE_ENV || "development";
 const isTest = process.env.STRIPE_MODE === "test" || NODE_ENV === "development";
 const stripeKey = isTest ? process.env.STRIPE_TEST_KEY : process.env.STRIPE_SECRET_KEY;
 const stripeWebhookSecret = isTest ? process.env.STRIPE_WEBHOOK_TEST_SECRET : process.env.STRIPE_WEBHOOK_SECRET;
-const frontendUrl = process.env.FRONTEND_URL || "http://localhost:4000";
+const frontendUrl = process.env.FRONTEND_URL || process.env.URL_FRONTEND || "http://localhost:4000";
 const port = process.env.PORT || 3000;
 
 const stripe = stripeLib(stripeKey);
 
-// --- PostgreSQL ---
+// --- Postgres ---
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.env.DATABASE_URL || process.env.URL_BASE_DE_DONNÉES,
   ssl: { rejectUnauthorized: false },
 });
 
@@ -61,86 +61,60 @@ async function fetchICal(url, logement) {
 }
 
 // --- Brevo ---
-const brevoApiKey = process.env.BREVO_API_KEY;
+const brevoApiKey = process.env.CLÉ_API_BREVO || process.env.BREVO_API_KEY;
 const brevoSender = process.env.BREVO_SENDER || "contact@livablom.fr";
 const brevoSenderName = process.env.BREVO_SENDER_NAME || "LIVABLŌM";
 const brevoAdminTo = process.env.BREVO_TO || "livablom59@gmail.com";
 
-if (brevoApiKey) {
-  const client = SibApiV3Sdk.ApiClient.instance;
-  client.authentications["api-key"].apiKey = brevoApiKey;
-} else {
+if (!brevoApiKey) {
   console.warn("⚠️ Clé Brevo introuvable, emails non envoyés.");
+} else {
+  const client = SibApiV3Sdk.ApiClient.instance;
+  client.authentications['api-key'].apiKey = brevoApiKey;
 }
 
-// --- Envoi des emails (pro & visuel) ---
 async function sendConfirmationEmail({ name, email, logement, startDate, endDate, personnes }) {
   if (!brevoApiKey) return;
 
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
-  const logementDisplay = logement === "BLOM" ? "BLŌM – Espace bien-être & spa" : "LIVA – Logement tout équipé";
-  const formattedStart = new Date(startDate).toLocaleDateString("fr-FR");
-  const formattedEnd = new Date(endDate).toLocaleDateString("fr-FR");
-
-  const htmlTemplateClient = `
-  <div style="font-family:Arial,sans-serif;color:#222;max-width:600px;margin:auto;background:#fff;padding:20px;border-radius:12px;box-shadow:0 0 10px rgba(0,0,0,0.1)">
-    <div style="text-align:center;padding-bottom:10px;border-bottom:1px solid #eee;">
-      <h2 style="color:#000;font-weight:700;margin:0;">Confirmation de votre réservation</h2>
-      <p style="font-size:15px;color:#777;margin-top:4px;">Merci d’avoir choisi <strong>LIVABLŌM</strong></p>
-    </div>
-    <div style="padding:20px 10px;">
-      <p>Bonjour ${name || ""},</p>
-      <p>Nous vous confirmons votre réservation pour :</p>
-      <ul style="line-height:1.6;">
-        <li><strong>Logement :</strong> ${logementDisplay}</li>
-        <li><strong>Date d’arrivée :</strong> ${formattedStart}</li>
-        <li><strong>Date de départ :</strong> ${formattedEnd} (départ avant <strong>11h</strong>)</li>
-        <li><strong>Nombre de personnes :</strong> ${personnes || "Non précisé"}</li>
-      </ul>
-      <p>Nous restons à votre disposition pour toute demande ou précision avant votre arrivée.</p>
-      <p style="margin-top:20px;">À très bientôt,<br/><strong>L’équipe LIVABLŌM</strong></p>
-    </div>
-    <div style="text-align:center;border-top:1px solid #eee;padding-top:10px;font-size:12px;color:#777;">
-      <p>LIVABLŌM – Hébergements & bien-être</p>
-      <p><a href="https://livablom.fr" style="color:#000;text-decoration:none;">www.livablom.fr</a></p>
-    </div>
-  </div>
-  `;
-
-  const htmlTemplateAdmin = `
-  <div style="font-family:Arial,sans-serif;color:#222;max-width:600px;margin:auto;background:#fff;padding:20px;border-radius:12px;box-shadow:0 0 10px rgba(0,0,0,0.1)">
-    <h3 style="margin-top:0;">📩 Nouvelle réservation reçue</h3>
-    <ul style="line-height:1.6;">
-      <li><strong>Nom :</strong> ${name || ""}</li>
-      <li><strong>Email :</strong> ${email}</li>
-      <li><strong>Logement :</strong> ${logementDisplay}</li>
-      <li><strong>Arrivée :</strong> ${formattedStart}</li>
-      <li><strong>Départ :</strong> ${formattedEnd} (départ avant 11h)</li>
-      <li><strong>Personnes :</strong> ${personnes || "Non précisé"}</li>
-    </ul>
-  </div>
-  `;
-
+  // Email client
   try {
     await tranEmailApi.sendTransacEmail({
       sender: { name: brevoSenderName, email: brevoSender },
-      to: [{ email }],
-      subject: `Confirmation de réservation - ${logementDisplay}`,
-      htmlContent: htmlTemplateClient
+      to: [{ email: email, name: name || "" }],
+      subject: `Confirmation de réservation - LIVABLŌM`,
+      htmlContent: `
+        <div style="font-family:Arial, sans-serif; color:#222;">
+          <h3>Bonjour ${name || ""},</h3>
+          <p>Merci pour votre réservation sur <strong>LIVABLŌM</strong>.</p>
+          <p><strong>Dates :</strong> ${startDate} au ${endDate} (départ le dernier jour avant 11h)</p>
+          <p><strong>Nombre de personnes :</strong> ${personnes || ""}</p>
+          <p>Cordialement,<br/>L’équipe LIVABLŌM</p>
+        </div>
+      `
     });
     console.log("✉️ Email client envoyé :", email);
   } catch (err) {
     console.error("❌ Erreur email client :", err);
   }
 
+  // Email admin
   if (brevoAdminTo) {
     try {
       await tranEmailApi.sendTransacEmail({
         sender: { name: brevoSenderName, email: brevoSender },
         to: [{ email: brevoAdminTo, name: "LIVABLŌM Admin" }],
-        subject: `Nouvelle réservation - ${logementDisplay}`,
-        htmlContent: htmlTemplateAdmin
+        subject: `Nouvelle réservation`,
+        htmlContent: `
+          <div style="font-family:Arial, sans-serif; color:#222;">
+            <h3>Nouvelle réservation</h3>
+            <p><strong>Nom :</strong> ${name || ""}</p>
+            <p><strong>Email :</strong> ${email || ""}</p>
+            <p><strong>Dates :</strong> ${startDate} au ${endDate} (départ le dernier jour avant 11h)</p>
+            <p><strong>Nombre de personnes :</strong> ${personnes || ""}</p>
+          </div>
+        `
       });
       console.log("✉️ Email admin envoyé à :", brevoAdminTo);
     } catch (err) {
@@ -166,13 +140,22 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     try {
+      // BDD
       await pool.query(
         "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
         [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
       );
 
-      const clientEmail = session.metadata.email || (session.customer_details && session.customer_details.email);
-      const clientName = session.metadata.name || (session.customer_details && session.customer_details.name);
+      // Envoi emails
+      const clientEmail =
+        (session.metadata && session.metadata.email) ||
+        (session.customer_details && session.customer_details.email) ||
+        session.customer_email;
+
+      const clientName =
+        (session.metadata && session.metadata.name) ||
+        (session.customer_details && session.customer_details.name) ||
+        "Client";
 
       await sendConfirmationEmail({
         name: clientName,
@@ -229,7 +212,7 @@ app.post("/api/checkout", async (req, res) => {
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      customer_email: email, // 🔥 Pré-remplit le champ email sur Stripe
+      customer_email: email, // pré-remplit automatiquement le mail client
       line_items: [{
         price_data: {
           currency: "eur",
