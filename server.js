@@ -1,16 +1,15 @@
-// server.js – version complète corrigée
+// server.js – LIVABLŌM
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
 
 const express = require("express");
-const bodyParser = require("body-parser");
 const cors = require("cors");
 const { Pool } = require("pg");
 const stripeLib = require("stripe");
 const ical = require("ical");
 const fetch = require("node-fetch");
-const SibApiV3Sdk = require('sib-api-v3-sdk');
+const SibApiV3Sdk = require("sib-api-v3-sdk");
 
 // --- Variables ---
 const NODE_ENV = process.env.NODE_ENV || "development";
@@ -66,9 +65,7 @@ const brevoSender = process.env.BREVO_SENDER || "contact@livablom.fr";
 const brevoSenderName = process.env.BREVO_SENDER_NAME || "LIVABLŌM";
 const brevoAdminTo = process.env.BREVO_TO || "livablom59@gmail.com";
 
-if (!brevoApiKey) {
-  console.warn("⚠️ Clé Brevo introuvable, emails non envoyés.");
-} else {
+if (brevoApiKey) {
   const client = SibApiV3Sdk.ApiClient.instance;
   client.authentications['api-key'].apiKey = brevoApiKey;
 }
@@ -86,39 +83,20 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
       to: [{ email: email, name: name || "" }],
       subject: `Confirmation de réservation - LIVABLŌM`,
       htmlContent: `
-        <div style="font-family: 'Arial', sans-serif; color: #333; background-color: #f9f9f9; padding: 20px;">
-          <div style="max-width: 600px; margin: auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.05);">
-            <h2 style="color: #2E86C1;">Bonjour ${name || ""},</h2>
+        <div style="font-family:Arial,sans-serif;color:#333;background-color:#f9f9f9;padding:20px;">
+          <div style="max-width:600px;margin:auto;background-color:#fff;padding:30px;border-radius:8px;box-shadow:0 0 10px rgba(0,0,0,0.05);">
+            <h2 style="color:#2E86C1;">Bonjour ${name || ""},</h2>
             <p>Merci pour votre réservation sur <strong>LIVABLŌM</strong>.</p>
-            <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Logement :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${logement}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${startDate}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${endDate} (départ avant 11h)</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Nombre de personnes :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${personnes || ""}</td>
-              </tr>
+            <table style="width:100%;border-collapse:collapse;margin:20px 0;">
+              <tr><td style="padding:8px;border:1px solid #ddd;"><strong>Logement :</strong></td><td style="padding:8px;border:1px solid #ddd;">${logement}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #ddd;"><strong>Date d'arrivée :</strong></td><td style="padding:8px;border:1px solid #ddd;">${startDate}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #ddd;"><strong>Date de départ :</strong></td><td style="padding:8px;border:1px solid #ddd;">${endDate} (départ avant 11h)</td></tr>
+              <tr><td style="padding:8px;border:1px solid #ddd;"><strong>Nombre de personnes :</strong></td><td style="padding:8px;border:1px solid #ddd;">${personnes || ""}</td></tr>
             </table>
-            <p style="margin-top: 20px;">Nous vous remercions de votre confiance et vous souhaitons un excellent séjour !</p>
-            <div style="text-align: center; margin-top: 30px;">
-              <a href="https://livablom.fr/contact"
-                 style="background-color: #2E86C1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-                Nous contacter
-              </a>
+            <div style="text-align:center;margin-top:30px;">
+              <a href="https://livablom.fr/contact" style="background-color:#2E86C1;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;">Nous contacter</a>
             </div>
-            <p style="margin-top: 30px; font-size: 0.9em; color: #666;">
-              Cordialement,<br/>
-              L’équipe <strong>LIVABLŌM</strong>
-            </p>
+            <p style="margin-top:30px;font-size:0.9em;color:#666;">Cordialement,<br/>L’équipe <strong>LIVABLŌM</strong></p>
           </div>
         </div>
       `
@@ -136,7 +114,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
         to: [{ email: brevoAdminTo, name: "LIVABLŌM Admin" }],
         subject: `Nouvelle réservation - ${logement}`,
         htmlContent: `
-          <div style="font-family:Arial, sans-serif; color:#222;">
+          <div style="font-family:Arial,sans-serif;color:#222;">
             <h3>Nouvelle réservation</h3>
             <p><strong>Nom :</strong> ${name || ""}</p>
             <p><strong>Email :</strong> ${email || ""}</p>
@@ -156,12 +134,11 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
 
 // --- Express ---
 const app = express();
-
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json()); // Pour toutes les routes sauf webhook
 
 // --- Webhook Stripe ---
-app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, res) => {
+app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
   try {
@@ -179,11 +156,12 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
         [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
       );
 
+      // Email via webhook
       await sendConfirmationEmail({
         name: session.metadata.name,
         email: session.metadata.email,
         logement: session.metadata.logement,
-        startDate: session.metadata.date_debut,
+        startDate: session.metadata.date_debut + " à partir de " + (session.metadata.logement.toUpperCase() === "BLOM" ? "19h" : "16h"),
         endDate: session.metadata.date_fin,
         personnes: session.metadata.personnes,
         phone: session.metadata.phone
@@ -228,39 +206,34 @@ app.get("/api/reservations/:logement", async (req, res) => {
 app.post("/api/checkout", async (req, res) => {
   try {
     const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
+    const logementUpper = logement.toUpperCase();
     const montantFinal = process.env.TEST_PAYMENT === "true" ? 1 : amount;
 
     // --- Heure d'arrivée ---
-    let heureArrivee = "16h";
-    if (logement.toUpperCase() === "BLOM") heureArrivee = "19h";
+    const heureArrivee = logementUpper === "BLOM" ? "19h" : "16h";
 
-    // --- URLs encodées pour Stripe ---
-    const successUrl = encodeURI(`${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`);
-    const cancelUrl = encodeURI(`${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`);
-
-    // --- Création session Stripe ---
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [{
         price_data: {
           currency: "eur",
-          product_data: { name: `Réservation ${logement}` },
+          product_data: { name: `Réservation ${logementUpper}` },
           unit_amount: Math.round(montantFinal * 100)
         },
         quantity: 1
       }],
       mode: "payment",
       customer_email: email,
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
+      success_url: encodeURI(`${frontendUrl}/${logementUpper.toLowerCase()}/merci`),
+      cancel_url: encodeURI(`${frontendUrl}/${logementUpper.toLowerCase()}/annule`),
+      metadata: { logement: logementUpper, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
     });
 
-    // --- Email confirmation ---
+    // Email client immédiat (optionnel, peut attendre webhook si Stripe > 2.0)
     await sendConfirmationEmail({
       name,
       email,
-      logement,
+      logement: logementUpper,
       startDate: `${startDate} à partir de ${heureArrivee}`,
       endDate,
       personnes,
