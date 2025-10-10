@@ -1,4 +1,4 @@
-// server.js – version complète corrigée et finalisée
+// server.js – version complète corrigée et finalisée (arrivée 16h / départ avant 11h)
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
@@ -63,7 +63,7 @@ async function fetchICal(url, logement) {
 // --- Brevo ---
 const brevoApiKey = process.env.CLÉ_API_BREVO || process.env.BREVO_API_KEY;
 const brevoSender = process.env.BREVO_SENDER || "contact@livablom.fr";
-const brevoSenderName = process.env.BREVO_SENDER_NAME || "LIVABLŌM";
+const brevoSenderName = process.env.BREVO_SENDER_NAME || "LIVABLOM";
 const brevoAdminTo = process.env.BREVO_TO || "livablom59@gmail.com";
 
 if (!brevoApiKey) {
@@ -97,7 +97,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
               </tr>
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${startDate}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${startDate} à 16h</td>
               </tr>
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td>
@@ -137,7 +137,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
             <p><strong>Nom :</strong> ${name || ""}</p>
             <p><strong>Email :</strong> ${email || ""}</p>
             <p><strong>Logement réservé :</strong> ${logement}</p>
-            <p><strong>Dates :</strong> ${startDate} au ${endDate} (départ avant 11h)</p>
+            <p><strong>Dates :</strong> ${startDate} à 16h au ${endDate} (départ avant 11h)</p>
             <p><strong>Nombre de personnes :</strong> ${personnes || ""}</p>
           </div>
         `
@@ -166,13 +166,11 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     try {
-      // BDD
       await pool.query(
         "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
         [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
       );
 
-      // Envoi emails
       const clientEmail = session.metadata.email;
       const clientName = session.metadata.name;
 
@@ -195,7 +193,7 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
 app.use(cors());
 app.use(bodyParser.json());
 
-// --- Endpoint réservations (BDD + Google) ---
+// --- Endpoint réservations ---
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
   if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
@@ -240,7 +238,7 @@ app.post("/api/checkout", async (req, res) => {
         quantity: 1
       }],
       mode: "payment",
-      customer_email: email, // pré-remplit automatiquement le mail sur Stripe
+      customer_email: email,
       success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
       cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
       metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
