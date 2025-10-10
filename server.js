@@ -1,4 +1,4 @@
-// server.js — LIVABLŌM (paiement Stripe + email + réservation)
+// server.js — version améliorée LIVABLŌM
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
@@ -10,21 +10,21 @@ const { Pool } = require("pg");
 const stripeLib = require("stripe");
 const ical = require("ical");
 const fetch = require("node-fetch");
-const SibApiV3Sdk = require("sib-api-v3-sdk");
+const SibApiV3Sdk = require('sib-api-v3-sdk');
 
-// --- Variables d'environnement ---
+// --- Variables d’environnement ---
 const NODE_ENV = process.env.NODE_ENV || "development";
 const isTest = process.env.STRIPE_MODE === "test" || NODE_ENV === "development";
 const stripeKey = isTest ? process.env.STRIPE_TEST_KEY : process.env.STRIPE_SECRET_KEY;
 const stripeWebhookSecret = isTest ? process.env.STRIPE_WEBHOOK_TEST_SECRET : process.env.STRIPE_WEBHOOK_SECRET;
-const frontendUrl = process.env.FRONTEND_URL || "http://localhost:4000";
+const frontendUrl = process.env.FRONTEND_URL || process.env.URL_FRONTEND || "http://localhost:4000";
 const port = process.env.PORT || 3000;
 
 const stripe = stripeLib(stripeKey);
 
-// --- Base de données PostgreSQL ---
+// --- PostgreSQL ---
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.env.DATABASE_URL || process.env.URL_BASE_DE_DONNÉES,
   ssl: { rejectUnauthorized: false },
 });
 
@@ -32,13 +32,12 @@ pool.connect()
   .then(() => console.log("✅ Connecté à PostgreSQL"))
   .catch(err => console.error("❌ Erreur connexion BDD:", err));
 
-// --- Calendriers Google (exemples) ---
+// --- Calendriers Google ---
 const calendars = {
   LIVA: ["https://calendar.google.com/calendar/ical/.../basic.ics"],
-  BLOM: ["https://calendar.google.com/calendar/ical/.../basic.ics"],
+  BLOM: ["https://calendar.google.com/calendar/ical/.../basic.ics"]
 };
 
-// --- Lecture iCal ---
 async function fetchICal(url, logement) {
   try {
     const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
@@ -53,100 +52,108 @@ async function fetchICal(url, logement) {
         end: ev.end,
         logement,
         display: "background",
-        color: "#ff0000",
+        color: "#ff0000"
       }));
   } catch (err) {
-    console.error("❌ Erreur iCal:", err);
+    console.error("❌ Erreur iCal pour", logement, url, err);
     return [];
   }
 }
 
 // --- Configuration Brevo ---
-const brevoApiKey = process.env.CLÉ_API_BREVO || process.env.BREVO_API_KEY;
+const brevoApiKey = process.env.BREVO_API_KEY || process.env.CLÉ_API_BREVO;
 const brevoSender = process.env.BREVO_SENDER || "contact@livablom.fr";
 const brevoSenderName = process.env.BREVO_SENDER_NAME || "LIVABLŌM";
 const brevoAdminTo = process.env.BREVO_TO || "livablom59@gmail.com";
 
-if (brevoApiKey) {
-  const client = SibApiV3Sdk.ApiClient.instance;
-  client.authentications["api-key"].apiKey = brevoApiKey;
+if (!brevoApiKey) {
+  console.warn("⚠️ Clé Brevo manquante, emails désactivés.");
 } else {
-  console.warn("⚠️ Clé Brevo absente — les e-mails ne seront pas envoyés.");
+  const client = SibApiV3Sdk.ApiClient.instance;
+  client.authentications['api-key'].apiKey = brevoApiKey;
 }
 
-// --- Fonction d'envoi d'email (client + admin) ---
 async function sendConfirmationEmail({ name, email, logement, startDate, endDate, personnes }) {
   if (!brevoApiKey) return;
+
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
-  // --- Email client (visuel spa / beige / logo lotus) ---
-  const htmlClient = `
-  <div style="font-family: 'Helvetica Neue', Arial, sans-serif; background-color:#faf8f5; color:#333; padding:25px;">
-    <div style="max-width:600px;margin:auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 4px 10px rgba(0,0,0,0.05);">
-      <div style="background-color:#f1e9df;padding:20px;text-align:center;">
-        <img src="https://livablom.fr/assets/img/lotus.jpg" alt="LIVABLŌM" style="height:60px;margin-bottom:10px;">
-        <h1 style="color:#7b5e3b;letter-spacing:2px;margin:0;">LIVABLŌM</h1>
-        <p style="color:#a78c6f;margin:0;">Spa · Détente · Petit-déjeuner offert</p>
+  // --- Contenu dynamique selon logement ---
+  let subject, htmlContent;
+  const cleanName = logement?.toUpperCase() || "";
+
+  if (cleanName === "BLOM") {
+    subject = `Votre séjour bien-être à BLŌM – Confirmation de réservation`;
+    htmlContent = `
+      <div style="font-family:Arial, sans-serif; color:#222;">
+        <h2 style="color:#000;">Merci pour votre réservation, ${name || ""} 🌸</h2>
+        <p>Nous avons le plaisir de confirmer votre séjour à <strong>BLŌM</strong>, notre espace bien-être dédié à la détente et au ressourcement.</p>
+        <p><strong>Dates :</strong> ${startDate} → ${endDate}</p>
+        <p><strong>Nombre de personnes :</strong> ${personnes || "1"}</p>
+        <p>Nous avons hâte de vous accueillir dans une atmosphère chaleureuse et apaisante.</p>
+        <br/>
+        <p>🌿 <em>L’équipe LIVABLŌM</em><br/>
+        <a href="https://livablom.fr" style="color:#444;">www.livablom.fr</a></p>
       </div>
-      <div style="padding:30px;">
-        <h2 style="color:#7b5e3b;">Bonjour ${name || ""},</h2>
-        <p>Nous vous remercions chaleureusement pour votre réservation chez <strong>LIVABLŌM</strong> 🌸</p>
-        <p>Voici les détails de votre séjour :</p>
-
-        <div style="background-color:#f9f6f2;border-left:4px solid #c5a47e;padding:15px 20px;margin:20px 0;border-radius:6px;">
-          <p><strong>🏡 Logement :</strong> ${logement}</p>
-          <p><strong>📅 Dates :</strong> du ${startDate} au ${endDate}</p>
-          <p><strong>👥 Nombre de personnes :</strong> ${personnes || "non précisé"}</p>
-        </div>
-
-        <p>Nous vous accueillerons avec plaisir dans une ambiance apaisante et raffinée.</p>
-        <p>En attendant votre arrivée, n’hésitez pas à consulter nos prestations bien-être sur le site.</p>
-
-        <div style="text-align:center;margin-top:25px;">
-          <a href="https://livablom.fr" style="background-color:#7b5e3b;color:#fff;padding:12px 25px;border-radius:30px;text-decoration:none;font-weight:bold;">Découvrir LIVABLŌM</a>
-        </div>
-
-        <p style="margin-top:35px;color:#555;">À très bientôt 🌿<br><strong>L’équipe LIVABLŌM</strong></p>
+    `;
+  } else if (cleanName === "LIVA") {
+    subject = `Confirmation de votre réservation à LIVA 🏡`;
+    htmlContent = `
+      <div style="font-family:Arial, sans-serif; color:#222;">
+        <h2 style="color:#000;">Bonjour ${name || ""},</h2>
+        <p>Votre séjour à <strong>LIVA</strong> est confirmé !</p>
+        <p><strong>Dates :</strong> ${startDate} → ${endDate}</p>
+        <p><strong>Nombre de personnes :</strong> ${personnes || "1"}</p>
+        <p>Nous espérons que vous apprécierez le confort et l’autonomie de ce logement tout équipé.</p>
+        <br/>
+        <p>À bientôt,<br/>
+        <strong>L’équipe LIVABLŌM</strong><br/>
+        <a href="https://livablom.fr" style="color:#444;">www.livablom.fr</a></p>
       </div>
-      <div style="background-color:#f1e9df;color:#7b5e3b;text-align:center;padding:12px;font-size:12px;">
-        © 2025 LIVABLŌM · Guesnain, Hauts-de-France
+    `;
+  } else {
+    subject = `Confirmation de votre réservation LIVABLŌM`;
+    htmlContent = `
+      <div style="font-family:Arial, sans-serif; color:#222;">
+        <h2>Merci pour votre réservation, ${name || ""} !</h2>
+        <p>Votre séjour sur <strong>LIVABLŌM</strong> est bien confirmé.</p>
+        <p><strong>Dates :</strong> ${startDate} → ${endDate}</p>
+        <p><strong>Nombre de personnes :</strong> ${personnes || "1"}</p>
+        <br/>
+        <p>Cordialement,<br/>L’équipe LIVABLŌM</p>
       </div>
-    </div>
-  </div>`;
+    `;
+  }
 
-  // --- Email admin ---
-  const htmlAdmin = `
-  <div style="font-family: Arial, sans-serif; color: #333; background-color: #fafafa; padding: 20px;">
-    <div style="max-width: 600px; margin: auto; background: #fff; border-radius: 8px; padding: 25px; box-shadow: 0 2px 6px rgba(0,0,0,0.1);">
-      <h2>Nouvelle réservation – ${logement}</h2>
-      <p><strong>Nom :</strong> ${name || ""}</p>
-      <p><strong>Email :</strong> ${email || ""}</p>
-      <p><strong>Logement :</strong> ${logement}</p>
-      <p><strong>Dates :</strong> ${startDate} au ${endDate}</p>
-      <p><strong>Personnes :</strong> ${personnes || ""}</p>
-      <hr>
-      <p style="font-size: 12px; color: #777;">Email automatique envoyé par le serveur LIVABLŌM</p>
-    </div>
-  </div>`;
-
+  // --- Email client ---
   try {
     await tranEmailApi.sendTransacEmail({
       sender: { name: brevoSenderName, email: brevoSender },
-      to: [{ email: email }],
-      subject: `Votre réservation ${logement} est confirmée ✨`,
-      htmlContent: htmlClient,
+      to: [{ email, name: name || "" }],
+      subject,
+      htmlContent
     });
     console.log("✉️ Email client envoyé :", email);
   } catch (err) {
     console.error("❌ Erreur email client :", err);
   }
 
+  // --- Email admin ---
   try {
     await tranEmailApi.sendTransacEmail({
       sender: { name: brevoSenderName, email: brevoSender },
-      to: [{ email: brevoAdminTo }],
-      subject: `Nouvelle réservation – ${logement}`,
-      htmlContent: htmlAdmin,
+      to: [{ email: brevoAdminTo, name: "LIVABLŌM Admin" }],
+      subject: `Nouvelle réservation - ${logement}`,
+      htmlContent: `
+        <div style="font-family:Arial, sans-serif; color:#222;">
+          <h3>Nouvelle réservation</h3>
+          <p><strong>Nom :</strong> ${name}</p>
+          <p><strong>Email :</strong> ${email}</p>
+          <p><strong>Logement :</strong> ${logement}</p>
+          <p><strong>Dates :</strong> ${startDate} → ${endDate}</p>
+          <p><strong>Personnes :</strong> ${personnes}</p>
+        </div>
+      `
     });
     console.log("✉️ Email admin envoyé à :", brevoAdminTo);
   } catch (err) {
@@ -154,44 +161,51 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
   }
 }
 
-// --- Initialisation Express ---
+// --- Express ---
 const app = express();
 
-// Webhook Stripe
+// Stripe Webhook
 app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
+  let event;
   try {
-    const event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
+    event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
+  } catch (err) {
+    console.error("❌ Webhook signature error:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
 
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    try {
       await pool.query(
         "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
         [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
       );
 
+      const clientEmail = session.metadata.email || session.customer_details?.email;
+      const clientName = session.metadata.name || session.customer_details?.name;
+
       await sendConfirmationEmail({
-        name: session.metadata.name,
-        email: session.metadata.email,
+        name: clientName,
+        email: clientEmail,
         logement: session.metadata.logement,
         startDate: session.metadata.date_debut,
         endDate: session.metadata.date_fin,
-        personnes: session.metadata.personnes,
+        personnes: session.metadata.personnes
       });
+    } catch (err) {
+      console.error("❌ Erreur webhook :", err);
     }
-
-    res.json({ received: true });
-  } catch (err) {
-    console.error("❌ Erreur webhook Stripe:", err.message);
-    res.status(400).send(`Webhook Error: ${err.message}`);
   }
+
+  res.json({ received: true });
 });
 
 app.use(cors());
 app.use(bodyParser.json());
 
-// --- Récupération des réservations (BDD + Google) ---
+// --- API Réservations ---
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
   if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
@@ -204,7 +218,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
       end: r.date_fin,
       display: "background",
       color: "#ff0000",
-      title: "Réservé (BDD)",
+      title: "Réservé (BDD)"
     }));
 
     for (const url of calendars[logement]) {
@@ -219,7 +233,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
   }
 });
 
-// --- Paiement Stripe Checkout ---
+// --- Stripe Checkout ---
 app.post("/api/checkout", async (req, res) => {
   try {
     const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
@@ -227,18 +241,19 @@ app.post("/api/checkout", async (req, res) => {
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
+      customer_email: email, // ✅ préremplissage automatique sur Stripe
       line_items: [{
         price_data: {
           currency: "eur",
           product_data: { name: `Réservation ${logement}` },
-          unit_amount: Math.round(montantFinal * 100),
+          unit_amount: Math.round(montantFinal * 100)
         },
-        quantity: 1,
+        quantity: 1
       }],
       mode: "payment",
       success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
       cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
-      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone },
+      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
     });
 
     res.json({ url: session.url });
@@ -248,9 +263,9 @@ app.post("/api/checkout", async (req, res) => {
   }
 });
 
-// --- Test route ---
-app.get("/", (req, res) => res.send("🚀 API LIVABLŌM opérationnelle (emails version Spa) !"));
+// --- Route test ---
+app.get("/", (req, res) => res.send("🚀 API LIVABLŌM opérationnelle !"));
 
 app.listen(port, () => {
-  console.log(`✅ Serveur lancé sur port ${port} (${NODE_ENV}) | Mode: ${isTest ? "TEST" : "PROD"}`);
+  console.log(`✅ Serveur lancé sur port ${port} (${NODE_ENV}) | Stripe: ${isTest ? "TEST" : "PROD"}`);
 });
