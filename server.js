@@ -1,4 +1,4 @@
-// server.js — Version stable avec emails professionnels
+// server.js — Version stable + email prérempli Stripe + email pro visuel
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
@@ -73,7 +73,7 @@ if (brevoApiKey) {
   console.warn("⚠️ Clé Brevo introuvable, emails non envoyés.");
 }
 
-// --- Envoi des emails (amélioré et visuel) ---
+// --- Envoi des emails (pro & visuel) ---
 async function sendConfirmationEmail({ name, email, logement, startDate, endDate, personnes }) {
   if (!brevoApiKey) return;
 
@@ -229,6 +229,7 @@ app.post("/api/checkout", async (req, res) => {
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
+      customer_email: email, // 🔥 Pré-remplit le champ email sur Stripe
       line_items: [{
         price_data: {
           currency: "eur",
