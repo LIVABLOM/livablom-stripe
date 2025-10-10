@@ -1,4 +1,4 @@
-// server.js – version complète corrigée et finalisée (arrivée 16h / départ avant 11h)
+// server.js – version complète avec numéro de téléphone inclus
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
@@ -22,7 +22,7 @@ const port = process.env.PORT || 3000;
 
 const stripe = stripeLib(stripeKey);
 
-// --- Postgres ---
+// --- PostgreSQL ---
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || process.env.URL_BASE_DE_DONNÉES,
   ssl: { rejectUnauthorized: false },
@@ -63,7 +63,7 @@ async function fetchICal(url, logement) {
 // --- Brevo ---
 const brevoApiKey = process.env.CLÉ_API_BREVO || process.env.BREVO_API_KEY;
 const brevoSender = process.env.BREVO_SENDER || "contact@livablom.fr";
-const brevoSenderName = process.env.BREVO_SENDER_NAME || "LIVABLOM";
+const brevoSenderName = process.env.BREVO_SENDER_NAME || "LIVABLŌM";
 const brevoAdminTo = process.env.BREVO_TO || "livablom59@gmail.com";
 
 if (!brevoApiKey) {
@@ -73,7 +73,8 @@ if (!brevoApiKey) {
   client.authentications['api-key'].apiKey = brevoApiKey;
 }
 
-async function sendConfirmationEmail({ name, email, logement, startDate, endDate, personnes }) {
+// --- Envoi des emails ---
+async function sendConfirmationEmail({ name, email, logement, startDate, endDate, personnes, phone }) {
   if (!brevoApiKey) return;
 
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
@@ -97,7 +98,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
               </tr>
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${startDate} à 16h</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${startDate} à partir de 16h</td>
               </tr>
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td>
@@ -136,8 +137,9 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
             <h3>Nouvelle réservation</h3>
             <p><strong>Nom :</strong> ${name || ""}</p>
             <p><strong>Email :</strong> ${email || ""}</p>
+            <p><strong>Téléphone :</strong> ${phone || "Non renseigné"}</p>
             <p><strong>Logement réservé :</strong> ${logement}</p>
-            <p><strong>Dates :</strong> ${startDate} à 16h au ${endDate} (départ avant 11h)</p>
+            <p><strong>Dates :</strong> ${startDate} à partir de 16h → ${endDate} (départ avant 11h)</p>
             <p><strong>Nombre de personnes :</strong> ${personnes || ""}</p>
           </div>
         `
@@ -171,16 +173,14 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
         [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
       );
 
-      const clientEmail = session.metadata.email;
-      const clientName = session.metadata.name;
-
       await sendConfirmationEmail({
-        name: clientName,
-        email: clientEmail,
+        name: session.metadata.name,
+        email: session.metadata.email,
         logement: session.metadata.logement,
         startDate: session.metadata.date_debut,
         endDate: session.metadata.date_fin,
-        personnes: session.metadata.personnes
+        personnes: session.metadata.personnes,
+        phone: session.metadata.phone
       });
     } catch (err) {
       console.error("❌ Erreur webhook :", err);
