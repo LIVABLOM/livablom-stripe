@@ -1,4 +1,4 @@
-// server.js Force commit pour mise à jour du serveur
+// server.js – version complète corrigée et finalisée
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
@@ -78,7 +78,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
 
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
-  // --- Email client amélioré ---
+  // --- Email client ---
   try {
     await tranEmailApi.sendTransacEmail({
       sender: { name: brevoSenderName, email: brevoSender },
@@ -130,13 +130,13 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
       await tranEmailApi.sendTransacEmail({
         sender: { name: brevoSenderName, email: brevoSender },
         to: [{ email: brevoAdminTo, name: "LIVABLŌM Admin" }],
-        subject: `Nouvelle réservation`,
+        subject: `Nouvelle réservation - ${logement}`,
         htmlContent: `
           <div style="font-family:Arial, sans-serif; color:#222;">
             <h3>Nouvelle réservation</h3>
             <p><strong>Nom :</strong> ${name || ""}</p>
             <p><strong>Email :</strong> ${email || ""}</p>
-            <p><strong>Logement :</strong> ${logement}</p>
+            <p><strong>Logement réservé :</strong> ${logement}</p>
             <p><strong>Dates :</strong> ${startDate} au ${endDate} (départ avant 11h)</p>
             <p><strong>Nombre de personnes :</strong> ${personnes || ""}</p>
           </div>
@@ -173,8 +173,8 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
       );
 
       // Envoi emails
-      const clientEmail = session.metadata.email || (session.customer_details && session.customer_details.email);
-      const clientName = session.metadata.name || (session.customer_details && session.customer_details.name);
+      const clientEmail = session.metadata.email;
+      const clientName = session.metadata.name;
 
       await sendConfirmationEmail({
         name: clientName,
@@ -240,14 +240,14 @@ app.post("/api/checkout", async (req, res) => {
         quantity: 1
       }],
       mode: "payment",
+      customer_email: email, // pré-remplit automatiquement le mail sur Stripe
       success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
       cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
-      customer_email: email, // <-- Pré-remplissage du mail
       metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
     });
 
-    console.log("✅ Session Stripe créée :", session.id);
     res.json({ url: session.url });
+    console.log("✅ Session Stripe créée :", session.id);
   } catch (err) {
     console.error("❌ Erreur création session Stripe:", err);
     res.status(500).json({ error: "Impossible de créer la session Stripe" });
