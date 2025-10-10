@@ -1,14 +1,16 @@
+// server.js - Version complète corrigée
+
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
 
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
+const { Pool } = require("pg");
 const stripeLib = require("stripe");
-
+const ical = require("ical");
+const fetch = require("node-fetch");
 const { sendConfirmationEmail } = require("./email");
-const { fetchICal } = require("./calendar");
-const { pool } = require("./db");
 
 // --- Variables ---
 const NODE_ENV = process.env.NODE_ENV || "development";
@@ -17,13 +19,46 @@ const stripeKey = isTest ? process.env.STRIPE_TEST_KEY : process.env.STRIPE_SECR
 const stripeWebhookSecret = isTest ? process.env.STRIPE_WEBHOOK_TEST_SECRET : process.env.STRIPE_WEBHOOK_SECRET;
 const frontendUrl = process.env.FRONTEND_URL || process.env.URL_FRONTEND || "http://localhost:4000";
 const port = process.env.PORT || 3000;
+
 const stripe = stripeLib(stripeKey);
+
+// --- Postgres ---
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || process.env.URL_BASE_DE_DONNÉES,
+  ssl: { rejectUnauthorized: false },
+});
+
+pool.connect()
+  .then(() => console.log("✅ Connecté à PostgreSQL"))
+  .catch(err => console.error("❌ Erreur connexion BDD:", err));
 
 // --- Google Calendar ---
 const calendars = {
   LIVA: ["https://calendar.google.com/calendar/ical/.../basic.ics"],
   BLOM: ["https://calendar.google.com/calendar/ical/.../basic.ics"]
 };
+
+async function fetchICal(url, logement) {
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+    if (!res.ok) return [];
+    const data = await res.text();
+    const parsed = ical.parseICS(data);
+    return Object.values(parsed)
+      .filter(ev => ev.start && ev.end)
+      .map(ev => ({
+        title: ev.summary || "Réservé (Google)",
+        start: ev.start,
+        end: ev.end,
+        logement,
+        display: "background",
+        color: "#ff0000"
+      }));
+  } catch (err) {
+    console.error("❌ Erreur iCal pour", logement, url, err);
+    return [];
+  }
+}
 
 // --- Express ---
 const app = express();
@@ -44,11 +79,13 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     try {
+      // --- BDD ---
       await pool.query(
         "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
         [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
       );
 
+      // --- Envoi emails ---
       const clientEmail = session.metadata.email || (session.customer_details && session.customer_details.email);
       const clientName = session.metadata.name || (session.customer_details && session.customer_details.name);
 
@@ -60,6 +97,7 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
         endDate: session.metadata.date_fin,
         personnes: session.metadata.personnes
       });
+
     } catch (err) {
       console.error("❌ Erreur webhook :", err);
     }
@@ -68,7 +106,7 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
   res.json({ received: true });
 });
 
-// --- Endpoint réservations ---
+// --- Endpoint réservations (BDD + Google Calendar) ---
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
   if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
@@ -113,13 +151,14 @@ app.post("/api/checkout", async (req, res) => {
         quantity: 1
       }],
       mode: "payment",
-      customer_email: email, // <-- pré-remplit le mail dans Stripe
+      customer_email: email, // Pré-remplissage automatique
       success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
       cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
       metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
     });
 
     res.json({ url: session.url });
+    console.log("✅ Session Stripe créée :", session.id);
   } catch (err) {
     console.error("❌ Erreur création session Stripe:", err);
     res.status(500).json({ error: "Impossible de créer la session Stripe" });
