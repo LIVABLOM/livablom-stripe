@@ -1,4 +1,4 @@
-// server.js - LIVABLŌM
+// server.js – version complète corrigée et finalisée
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
@@ -78,25 +78,44 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
 
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
-  const start = new Date(startDate).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
-  const end = new Date(endDate).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
-
   // --- Email client ---
   try {
     await tranEmailApi.sendTransacEmail({
       sender: { name: brevoSenderName, email: brevoSender },
       to: [{ email: email, name: name || "" }],
-      subject: `Confirmation de réservation ${logement} - LIVABLŌM`,
+      subject: `Confirmation de réservation - LIVABLŌM`,
       htmlContent: `
-        <div style="font-family:Arial, sans-serif; color:#222;">
-          <h2 style="color:#2a2a2a;">Bonjour ${name || ""},</h2>
-          <p>Merci pour votre réservation sur <strong>LIVABLŌM</strong>.</p>
-          <p><strong>Logement réservé :</strong> ${logement}</p>
-          <p><strong>Date d'arrivée :</strong> ${start}</p>
-          <p><strong>Date de départ :</strong> ${end} (au plus tard 11h)</p>
-          <p><strong>Nombre de personnes :</strong> ${personnes || ""}</p>
-          <hr/>
-          <p>Cordialement,<br/>L’équipe <strong>LIVABLŌM</strong></p>
+        <div style="font-family: 'Arial', sans-serif; color: #333; background-color: #f9f9f9; padding: 20px;">
+          <div style="max-width: 600px; margin: auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.05);">
+            <h2 style="color: #2E86C1;">Bonjour ${name || ""},</h2>
+            <p>Merci pour votre réservation sur <strong>LIVABLŌM</strong>.</p>
+
+            <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Logement :</strong></td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${logement}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${startDate}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${endDate} (départ avant 11h)</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Nombre de personnes :</strong></td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${personnes || ""}</td>
+              </tr>
+            </table>
+
+            <p style="margin-top: 20px;">Nous vous remercions de votre confiance et vous souhaitons un excellent séjour !</p>
+
+            <p style="margin-top: 30px; font-size: 0.9em; color: #666;">
+              Cordialement,<br/>
+              L’équipe <strong>LIVABLŌM</strong>
+            </p>
+          </div>
         </div>
       `
     });
@@ -114,12 +133,11 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
         subject: `Nouvelle réservation - ${logement}`,
         htmlContent: `
           <div style="font-family:Arial, sans-serif; color:#222;">
-            <h2>Nouvelle réservation</h2>
+            <h3>Nouvelle réservation</h3>
             <p><strong>Nom :</strong> ${name || ""}</p>
             <p><strong>Email :</strong> ${email || ""}</p>
-            <p><strong>Logement :</strong> ${logement}</p>
-            <p><strong>Date d'arrivée :</strong> ${start}</p>
-            <p><strong>Date de départ :</strong> ${end} (au plus tard 11h)</p>
+            <p><strong>Logement réservé :</strong> ${logement}</p>
+            <p><strong>Dates :</strong> ${startDate} au ${endDate} (départ avant 11h)</p>
             <p><strong>Nombre de personnes :</strong> ${personnes || ""}</p>
           </div>
         `
@@ -134,50 +152,45 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
 // --- Express ---
 const app = express();
 
-// --- Stripe Webhook (RAW body) ---
-app.post(
-  "/webhook",
-  bodyParser.raw({ type: "application/json" }),
-  async (req, res) => {
-    const sig = req.headers["stripe-signature"];
-    let event;
-
-    try {
-      event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
-    } catch (err) {
-      console.error("❌ Webhook signature error:", err.message);
-      return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
-
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      try {
-        // BDD
-        await pool.query(
-          "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
-          [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
-        );
-
-        // Envoi emails
-        const clientEmail = session.metadata.email || (session.customer_details && session.customer_details.email);
-        const clientName = session.metadata.name || (session.customer_details && session.customer_details.name);
-
-        await sendConfirmationEmail({
-          name: clientName,
-          email: clientEmail,
-          logement: session.metadata.logement,
-          startDate: session.metadata.date_debut,
-          endDate: session.metadata.date_fin,
-          personnes: session.metadata.personnes
-        });
-      } catch (err) {
-        console.error("❌ Erreur webhook :", err);
-      }
-    }
-
-    res.json({ received: true });
+// Webhook Stripe
+app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
+  } catch (err) {
+    console.error("❌ Webhook signature error:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
   }
-);
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    try {
+      // BDD
+      await pool.query(
+        "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
+        [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
+      );
+
+      // Envoi emails
+      const clientEmail = session.metadata.email;
+      const clientName = session.metadata.name;
+
+      await sendConfirmationEmail({
+        name: clientName,
+        email: clientEmail,
+        logement: session.metadata.logement,
+        startDate: session.metadata.date_debut,
+        endDate: session.metadata.date_fin,
+        personnes: session.metadata.personnes
+      });
+    } catch (err) {
+      console.error("❌ Erreur webhook :", err);
+    }
+  }
+
+  res.json({ received: true });
+});
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -218,7 +231,6 @@ app.post("/api/checkout", async (req, res) => {
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      customer_email: email, // ← pré-rempli automatiquement
       line_items: [{
         price_data: {
           currency: "eur",
@@ -228,13 +240,14 @@ app.post("/api/checkout", async (req, res) => {
         quantity: 1
       }],
       mode: "payment",
+      customer_email: email, // pré-remplit automatiquement le mail sur Stripe
       success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
       cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
       metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
     });
 
-    console.log("✅ Session Stripe créée :", session.id);
     res.json({ url: session.url });
+    console.log("✅ Session Stripe créée :", session.id);
   } catch (err) {
     console.error("❌ Erreur création session Stripe:", err);
     res.status(500).json({ error: "Impossible de créer la session Stripe" });
