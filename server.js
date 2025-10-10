@@ -79,7 +79,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
 
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
-  // --- Email client ---
+  // Email client
   try {
     await tranEmailApi.sendTransacEmail({
       sender: { name: brevoSenderName, email: brevoSender },
@@ -87,49 +87,40 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
       subject: `Confirmation de réservation - LIVABLŌM`,
       htmlContent: `
         <div style="font-family: 'Arial', sans-serif; color: #333; background-color: #f9f9f9; padding: 20px;">
-  <div style="max-width: 600px; margin: auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.05);">
-    <h2 style="color: #2E86C1;">Bonjour ${name || ""},</h2>
-    <p>Merci pour votre réservation sur <strong>LIVABLŌM</strong>.</p>
-
-    <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
-      <tr>
-        <td style="padding: 8px; border: 1px solid #ddd;"><strong>Logement :</strong></td>
-        <td style="padding: 8px; border: 1px solid #ddd;">${logement}</td>
-      </tr>
-      <tr>
-        <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td>
-        <td style="padding: 8px; border: 1px solid #ddd;">${startDate} à partir de 16h</td>
-      </tr>
-      <tr>
-        <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td>
-        <td style="padding: 8px; border: 1px solid #ddd;">${endDate} (départ avant 11h)</td>
-      </tr>
-      <tr>
-        <td style="padding: 8px; border: 1px solid #ddd;"><strong>Nombre de personnes :</strong></td>
-        <td style="padding: 8px; border: 1px solid #ddd;">${personnes || ""}</td>
-      </tr>
-    </table>
-
-    <p style="margin-top: 20px;">
-      Nous vous remercions de votre confiance et vous souhaitons un excellent séjour !
-    </p>
-
-    <div style="text-align: center; margin-top: 30px;">
-      <a href="https://livablom.fr/contact"
-         style="background-color: #2E86C1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-        Nous contacter
-      </a>
-    </div>
-
-    <p style="margin-top: 30px; font-size: 0.9em; color: #666;">
-      Cordialement,<br/>
-      L’équipe <strong>LIVABLŌM</strong>
-    </p>
-  </div>
-</div>
-
-
-
+          <div style="max-width: 600px; margin: auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.05);">
+            <h2 style="color: #2E86C1;">Bonjour ${name || ""},</h2>
+            <p>Merci pour votre réservation sur <strong>LIVABLŌM</strong>.</p>
+            <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Logement :</strong></td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${logement}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${startDate}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${endDate} (départ avant 11h)</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Nombre de personnes :</strong></td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${personnes || ""}</td>
+              </tr>
+            </table>
+            <p style="margin-top: 20px;">Nous vous remercions de votre confiance et vous souhaitons un excellent séjour !</p>
+            <div style="text-align: center; margin-top: 30px;">
+              <a href="https://livablom.fr/contact"
+                 style="background-color: #2E86C1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+                Nous contacter
+              </a>
+            </div>
+            <p style="margin-top: 30px; font-size: 0.9em; color: #666;">
+              Cordialement,<br/>
+              L’équipe <strong>LIVABLŌM</strong>
+            </p>
+          </div>
+        </div>
       `
     });
     console.log("✉️ Email client envoyé :", email);
@@ -137,7 +128,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
     console.error("❌ Erreur email client :", err);
   }
 
-  // --- Email admin ---
+  // Email admin
   if (brevoAdminTo) {
     try {
       await tranEmailApi.sendTransacEmail({
@@ -151,7 +142,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
             <p><strong>Email :</strong> ${email || ""}</p>
             <p><strong>Téléphone :</strong> ${phone || "Non renseigné"}</p>
             <p><strong>Logement réservé :</strong> ${logement}</p>
-            <p><strong>Dates :</strong> ${startDate} à partir de 16h → ${endDate} (départ avant 11h)</p>
+            <p><strong>Dates :</strong> ${startDate} → ${endDate} (départ avant 11h)</p>
             <p><strong>Nombre de personnes :</strong> ${personnes || ""}</p>
           </div>
         `
@@ -239,13 +230,10 @@ app.post("/api/checkout", async (req, res) => {
     const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
     const montantFinal = process.env.TEST_PAYMENT === "true" ? 1 : amount;
 
-    // --- Heure d'arrivée selon le logement ---
-    let heureArrivee = "16h"; // par défaut pour LIVA
-    if (logement.toUpperCase() === "BLOM") {
-      heureArrivee = "19h";
-    }
+    // Heure d'arrivée selon le logement
+    let heureArrivee = "16h";
+    if (logement.toUpperCase() === "BLOM") heureArrivee = "19h";
 
-    // --- Création session Stripe ---
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [{
@@ -262,17 +250,16 @@ app.post("/api/checkout", async (req, res) => {
       cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
       metadata: {
         logement,
-        date_debut: startDate,   // uniquement la date pour Stripe
+        date_debut: startDate,
         date_fin: endDate,
         personnes,
         name,
         email,
         phone,
-        arrivalTime: heureArrivee  // info supplémentaire, ASCII seulement
+        arrivalTime: heureArrivee
       }
     });
 
-    // --- Envoi email confirmation avec heure d'arrivée ---
     await sendConfirmationEmail({
       name,
       email,
@@ -291,28 +278,6 @@ app.post("/api/checkout", async (req, res) => {
     res.status(500).json({ error: "Impossible de créer la session Stripe" });
   }
 });
-
-
-    // --- Envoi email confirmation avec heure d'arrivée ---
-    await sendConfirmationEmail({
-      name,
-      email,
-      logement,
-      startDate: startDate + " à partir de " + heureArrivee,
-      endDate,
-      personnes,
-      phone
-    });
-
-    res.json({ url: session.url });
-    console.log("✅ Session Stripe créée :", session.id);
-
-  } catch (err) {
-    console.error("❌ Erreur création session Stripe:", err);
-    res.status(500).json({ error: "Impossible de créer la session Stripe" });
-  }
-});
-
 
 // --- Route test ---
 app.get("/", (req, res) => res.send("🚀 API LIVABLŌM opérationnelle !"));
