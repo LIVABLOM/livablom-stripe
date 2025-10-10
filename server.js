@@ -6,9 +6,9 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 const stripeLib = require("stripe");
 
-const { pool } = require("./db");
 const { sendConfirmationEmail } = require("./email");
 const { fetchICal } = require("./calendar");
+const { pool } = require("./db");
 
 // --- Variables ---
 const NODE_ENV = process.env.NODE_ENV || "development";
@@ -17,7 +17,6 @@ const stripeKey = isTest ? process.env.STRIPE_TEST_KEY : process.env.STRIPE_SECR
 const stripeWebhookSecret = isTest ? process.env.STRIPE_WEBHOOK_TEST_SECRET : process.env.STRIPE_WEBHOOK_SECRET;
 const frontendUrl = process.env.FRONTEND_URL || process.env.URL_FRONTEND || "http://localhost:4000";
 const port = process.env.PORT || 3000;
-
 const stripe = stripeLib(stripeKey);
 
 // --- Google Calendar ---
@@ -30,35 +29,6 @@ const calendars = {
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
-
-// --- Stripe Checkout ---
-app.post("/api/checkout", async (req, res) => {
-  try {
-    const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
-    const montantFinal = process.env.TEST_PAYMENT === "true" ? 1 : amount;
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [{
-        price_data: {
-          currency: "eur",
-          product_data: { name: `Réservation ${logement}` },
-          unit_amount: Math.round(montantFinal * 100)
-        },
-        quantity: 1
-      }],
-      mode: "payment",
-      success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
-      cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
-      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
-    });
-
-    res.json({ url: session.url });
-  } catch (err) {
-    console.error("❌ Erreur création session Stripe:", err);
-    res.status(500).json({ error: "Impossible de créer la session Stripe" });
-  }
-});
 
 // --- Webhook Stripe ---
 app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, res) => {
@@ -123,6 +93,36 @@ app.get("/api/reservations/:logement", async (req, res) => {
   } catch (err) {
     console.error("❌ Erreur récupération:", err);
     res.status(500).json({ error: "Impossible de charger les réservations" });
+  }
+});
+
+// --- Stripe Checkout ---
+app.post("/api/checkout", async (req, res) => {
+  try {
+    const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
+    const montantFinal = process.env.TEST_PAYMENT === "true" ? 1 : amount;
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "eur",
+          product_data: { name: `Réservation ${logement}` },
+          unit_amount: Math.round(montantFinal * 100)
+        },
+        quantity: 1
+      }],
+      mode: "payment",
+      customer_email: email, // <-- pré-remplit le mail dans Stripe
+      success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
+      cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
+      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("❌ Erreur création session Stripe:", err);
+    res.status(500).json({ error: "Impossible de créer la session Stripe" });
   }
 });
 
