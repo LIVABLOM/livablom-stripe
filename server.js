@@ -118,7 +118,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
     </p>
 
     <div style="text-align: center; margin-top: 30px;">
-      <a href="mailto:livablom59@gmail.com"
+      <a href="https://livablom.fr/contact"
          style="background-color: #2E86C1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
         Nous contacter
       </a>
@@ -130,6 +130,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
     </p>
   </div>
 </div>
+
 
       `
     });
