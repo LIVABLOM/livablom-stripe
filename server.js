@@ -245,6 +245,7 @@ app.post("/api/checkout", async (req, res) => {
       heureArrivee = "19h";
     }
 
+    // --- Création session Stripe ---
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [{
@@ -259,8 +260,38 @@ app.post("/api/checkout", async (req, res) => {
       customer_email: email,
       success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
       cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
-      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone, arrivalTime: heureArrivee }
+      metadata: {
+        logement,
+        date_debut: startDate,   // uniquement la date pour Stripe
+        date_fin: endDate,
+        personnes,
+        name,
+        email,
+        phone,
+        arrivalTime: heureArrivee  // info supplémentaire, ASCII seulement
+      }
     });
+
+    // --- Envoi email confirmation avec heure d'arrivée ---
+    await sendConfirmationEmail({
+      name,
+      email,
+      logement,
+      startDate: `${startDate} à partir de ${heureArrivee}`,
+      endDate,
+      personnes,
+      phone
+    });
+
+    res.json({ url: session.url });
+    console.log("✅ Session Stripe créée :", session.id);
+
+  } catch (err) {
+    console.error("❌ Erreur création session Stripe:", err);
+    res.status(500).json({ error: "Impossible de créer la session Stripe" });
+  }
+});
+
 
     // --- Envoi email confirmation avec heure d'arrivée ---
     await sendConfirmationEmail({
