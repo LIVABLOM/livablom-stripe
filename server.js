@@ -87,41 +87,50 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
       subject: `Confirmation de réservation - LIVABLŌM`,
       htmlContent: `
         <div style="font-family: 'Arial', sans-serif; color: #333; background-color: #f9f9f9; padding: 20px;">
-          <div style="max-width: 600px; margin: auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.05);">
-            <h2 style="color: #2E86C1;">Bonjour ${name || ""},</h2>
-            <p>Merci pour votre réservation sur <strong>LIVABLŌM</strong>.</p>
+  <div style="max-width: 600px; margin: auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.05);">
+    <h2 style="color: #2E86C1;">Bonjour ${name || ""},</h2>
+    <p>Merci pour votre réservation sur <strong>LIVABLŌM</strong>.</p>
 
-            <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Logement :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${logement}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${startDate} à partir de 16h</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${endDate} (départ avant 11h)</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Nombre de personnes :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${personnes || ""}</td>
-              </tr>
-            </table>
+    <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
+      <tr>
+        <td style="padding: 8px; border: 1px solid #ddd;"><strong>Logement :</strong></td>
+        <td style="padding: 8px; border: 1px solid #ddd;">${logement}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td>
+        <td style="padding: 8px; border: 1px solid #ddd;">${startDate} à partir de 16h</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td>
+        <td style="padding: 8px; border: 1px solid #ddd;">${endDate} (départ avant 11h)</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px; border: 1px solid #ddd;"><strong>Nombre de personnes :</strong></td>
+        <td style="padding: 8px; border: 1px solid #ddd;">${personnes || ""}</td>
+      </tr>
+    </table>
 
-            <p style="margin-top: 20px;">Nous vous remercions de votre confiance et vous souhaitons un excellent séjour !
-            
-            Pour toute question ou information complémentaire, vous pouvez nous contacter :
-📞 par téléphone au 06 49 83 18 38  
-📧 par e-mail à livablom59@gmail.com</p>
+    <p style="margin-top: 20px;">
+      Nous vous remercions de votre confiance et vous souhaitons un excellent séjour !<br/><br/>
+      Pour toute question ou information complémentaire, vous pouvez nous contacter :<br/>
+      📞 <strong>06 49 83 18 38</strong><br/>
+      📧 <a href="mailto:livablom59@gmail.com" style="color:#2E86C1;">livablom59@gmail.com</a>
+    </p>
 
-            <p style="margin-top: 30px; font-size: 0.9em; color: #666;">
-              Cordialement,<br/>
-              L’équipe <strong>LIVABLŌM</strong>
-            </p>
-          </div>
-        </div>
+    <div style="text-align: center; margin-top: 30px;">
+      <a href="mailto:livablom59@gmail.com"
+         style="background-color: #2E86C1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+        Nous contacter
+      </a>
+    </div>
+
+    <p style="margin-top: 30px; font-size: 0.9em; color: #666;">
+      Cordialement,<br/>
+      L’équipe <strong>LIVABLŌM</strong>
+    </p>
+  </div>
+</div>
+
       `
     });
     console.log("✉️ Email client envoyé :", email);
