@@ -1,271 +1,169 @@
-// server.js — version améliorée LIVABLŌM
-
-const path = require("path");
-require("dotenv").config({ path: path.resolve(__dirname, ".env") });
-
+// server.js
+require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
-const { Pool } = require("pg");
-const stripeLib = require("stripe");
-const ical = require("ical");
-const fetch = require("node-fetch");
-const SibApiV3Sdk = require('sib-api-v3-sdk');
+const nodemailer = require("nodemailer");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
-// --- Variables d’environnement ---
-const NODE_ENV = process.env.NODE_ENV || "development";
-const isTest = process.env.STRIPE_MODE === "test" || NODE_ENV === "development";
-const stripeKey = isTest ? process.env.STRIPE_TEST_KEY : process.env.STRIPE_SECRET_KEY;
-const stripeWebhookSecret = isTest ? process.env.STRIPE_WEBHOOK_TEST_SECRET : process.env.STRIPE_WEBHOOK_SECRET;
-const frontendUrl = process.env.FRONTEND_URL || process.env.URL_FRONTEND || "http://localhost:4000";
+const app = express();
 const port = process.env.PORT || 3000;
 
-const stripe = stripeLib(stripeKey);
-
-// --- PostgreSQL ---
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || process.env.URL_BASE_DE_DONNÉES,
-  ssl: { rejectUnauthorized: false },
-});
-
-pool.connect()
-  .then(() => console.log("✅ Connecté à PostgreSQL"))
-  .catch(err => console.error("❌ Erreur connexion BDD:", err));
-
-// --- Calendriers Google ---
-const calendars = {
-  LIVA: ["https://calendar.google.com/calendar/ical/.../basic.ics"],
-  BLOM: ["https://calendar.google.com/calendar/ical/.../basic.ics"]
-};
-
-async function fetchICal(url, logement) {
-  try {
-    const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
-    if (!res.ok) return [];
-    const data = await res.text();
-    const parsed = ical.parseICS(data);
-    return Object.values(parsed)
-      .filter(ev => ev.start && ev.end)
-      .map(ev => ({
-        title: ev.summary || "Réservé (Google)",
-        start: ev.start,
-        end: ev.end,
-        logement,
-        display: "background",
-        color: "#ff0000"
-      }));
-  } catch (err) {
-    console.error("❌ Erreur iCal pour", logement, url, err);
-    return [];
-  }
-}
-
-// --- Configuration Brevo ---
-const brevoApiKey = process.env.BREVO_API_KEY || process.env.CLÉ_API_BREVO;
-const brevoSender = process.env.BREVO_SENDER || "contact@livablom.fr";
-const brevoSenderName = process.env.BREVO_SENDER_NAME || "LIVABLŌM";
-const brevoAdminTo = process.env.BREVO_TO || "livablom59@gmail.com";
-
-if (!brevoApiKey) {
-  console.warn("⚠️ Clé Brevo manquante, emails désactivés.");
-} else {
-  const client = SibApiV3Sdk.ApiClient.instance;
-  client.authentications['api-key'].apiKey = brevoApiKey;
-}
-
-async function sendConfirmationEmail({ name, email, logement, startDate, endDate, personnes }) {
-  if (!brevoApiKey) return;
-
-  const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
-
-  // --- Contenu dynamique selon logement ---
-  let subject, htmlContent;
-  const cleanName = logement?.toUpperCase() || "";
-
-  if (cleanName === "BLOM") {
-    subject = `Votre séjour bien-être à BLŌM – Confirmation de réservation`;
-    htmlContent = `
-      <div style="font-family:Arial, sans-serif; color:#222;">
-        <h2 style="color:#000;">Merci pour votre réservation, ${name || ""} 🌸</h2>
-        <p>Nous avons le plaisir de confirmer votre séjour à <strong>BLŌM</strong>, notre espace bien-être dédié à la détente et au ressourcement.</p>
-        <p><strong>Dates :</strong> ${startDate} → ${endDate}</p>
-        <p><strong>Nombre de personnes :</strong> ${personnes || "1"}</p>
-        <p>Nous avons hâte de vous accueillir dans une atmosphère chaleureuse et apaisante.</p>
-        <br/>
-        <p>🌿 <em>L’équipe LIVABLŌM</em><br/>
-        <a href="https://livablom.fr" style="color:#444;">www.livablom.fr</a></p>
-      </div>
-    `;
-  } else if (cleanName === "LIVA") {
-    subject = `Confirmation de votre réservation à LIVA 🏡`;
-    htmlContent = `
-      <div style="font-family:Arial, sans-serif; color:#222;">
-        <h2 style="color:#000;">Bonjour ${name || ""},</h2>
-        <p>Votre séjour à <strong>LIVA</strong> est confirmé !</p>
-        <p><strong>Dates :</strong> ${startDate} → ${endDate}</p>
-        <p><strong>Nombre de personnes :</strong> ${personnes || "1"}</p>
-        <p>Nous espérons que vous apprécierez le confort et l’autonomie de ce logement tout équipé.</p>
-        <br/>
-        <p>À bientôt,<br/>
-        <strong>L’équipe LIVABLŌM</strong><br/>
-        <a href="https://livablom.fr" style="color:#444;">www.livablom.fr</a></p>
-      </div>
-    `;
-  } else {
-    subject = `Confirmation de votre réservation LIVABLŌM`;
-    htmlContent = `
-      <div style="font-family:Arial, sans-serif; color:#222;">
-        <h2>Merci pour votre réservation, ${name || ""} !</h2>
-        <p>Votre séjour sur <strong>LIVABLŌM</strong> est bien confirmé.</p>
-        <p><strong>Dates :</strong> ${startDate} → ${endDate}</p>
-        <p><strong>Nombre de personnes :</strong> ${personnes || "1"}</p>
-        <br/>
-        <p>Cordialement,<br/>L’équipe LIVABLŌM</p>
-      </div>
-    `;
-  }
-
-  // --- Email client ---
-  try {
-    await tranEmailApi.sendTransacEmail({
-      sender: { name: brevoSenderName, email: brevoSender },
-      to: [{ email, name: name || "" }],
-      subject,
-      htmlContent
-    });
-    console.log("✉️ Email client envoyé :", email);
-  } catch (err) {
-    console.error("❌ Erreur email client :", err);
-  }
-
-  // --- Email admin ---
-  try {
-    await tranEmailApi.sendTransacEmail({
-      sender: { name: brevoSenderName, email: brevoSender },
-      to: [{ email: brevoAdminTo, name: "LIVABLŌM Admin" }],
-      subject: `Nouvelle réservation - ${logement}`,
-      htmlContent: `
-        <div style="font-family:Arial, sans-serif; color:#222;">
-          <h3>Nouvelle réservation</h3>
-          <p><strong>Nom :</strong> ${name}</p>
-          <p><strong>Email :</strong> ${email}</p>
-          <p><strong>Logement :</strong> ${logement}</p>
-          <p><strong>Dates :</strong> ${startDate} → ${endDate}</p>
-          <p><strong>Personnes :</strong> ${personnes}</p>
-        </div>
-      `
-    });
-    console.log("✉️ Email admin envoyé à :", brevoAdminTo);
-  } catch (err) {
-    console.error("❌ Erreur email admin :", err);
-  }
-}
-
-// --- Express ---
-const app = express();
-
-// Stripe Webhook
-app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, res) => {
-  const sig = req.headers["stripe-signature"];
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
-  } catch (err) {
-    console.error("❌ Webhook signature error:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
-    try {
-      await pool.query(
-        "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
-        [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
-      );
-
-      const clientEmail = session.metadata.email || session.customer_details?.email;
-      const clientName = session.metadata.name || session.customer_details?.name;
-
-      await sendConfirmationEmail({
-        name: clientName,
-        email: clientEmail,
-        logement: session.metadata.logement,
-        startDate: session.metadata.date_debut,
-        endDate: session.metadata.date_fin,
-        personnes: session.metadata.personnes
-      });
-    } catch (err) {
-      console.error("❌ Erreur webhook :", err);
-    }
-  }
-
-  res.json({ received: true });
-});
-
+// --- Middleware ---
 app.use(cors());
+app.use(express.json());
 app.use(bodyParser.json());
 
-// --- API Réservations ---
-app.get("/api/reservations/:logement", async (req, res) => {
-  const logement = req.params.logement.toUpperCase();
-  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
-
-  try {
-    let events = [];
-    const result = await pool.query("SELECT date_debut, date_fin FROM reservations WHERE logement = $1", [logement]);
-    events = result.rows.map(r => ({
-      start: r.date_debut,
-      end: r.date_fin,
-      display: "background",
-      color: "#ff0000",
-      title: "Réservé (BDD)"
-    }));
-
-    for (const url of calendars[logement]) {
-      const gEvents = await fetchICal(url, logement);
-      events = events.concat(gEvents);
-    }
-
-    res.json(events);
-  } catch (err) {
-    console.error("❌ Erreur récupération:", err);
-    res.status(500).json({ error: "Impossible de charger les réservations" });
-  }
+// --- Transport mail (Brevo / SMTP) ---
+const transporter = nodemailer.createTransport({
+  host: "smtp-relay.brevo.com",
+  port: 587,
+  auth: {
+    user: process.env.BREVO_USER,
+    pass: process.env.BREVO_PASS,
+  },
 });
 
-// --- Stripe Checkout ---
-app.post("/api/checkout", async (req, res) => {
+// --- Fonction d’envoi d’email de confirmation ---
+async function sendConfirmationEmail(formData, checkoutSession) {
+  const {
+    email,
+    nom,
+    prenom,
+    logement,
+    dateArrivee,
+    dateDepart,
+    message,
+  } = formData;
+
+  // déterminer le type de logement
+  const isBlom = logement && logement.toLowerCase().includes("blom");
+  const logementNom = isBlom ? "BLŌM – Espace bien-être" : "LIVA – Logement tout équipé";
+
+  const htmlContent = `
+  <div style="font-family: Arial, sans-serif; background: #f9f9f9; padding: 30px; color: #333;">
+    <div style="max-width: 600px; margin: auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+      <div style="background: #000; color: #fff; text-align: center; padding: 25px;">
+        <h1 style="margin: 0; font-size: 26px; letter-spacing: 2px;">LIVABLŌM</h1>
+        <p style="margin: 5px 0 0; font-size: 14px;">Votre réservation est confirmée ✨</p>
+      </div>
+      <div style="padding: 25px; line-height: 1.6;">
+        <h2 style="font-size: 20px; margin-bottom: 15px;">Bonjour ${prenom} ${nom},</h2>
+        <p>Nous avons le plaisir de confirmer votre réservation pour <strong>${logementNom}</strong>.</p>
+        <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 8px 0;"><strong>Arrivée :</strong></td>
+            <td>${dateArrivee}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0;"><strong>Départ :</strong></td>
+            <td>${dateDepart} <em>(départ au plus tard à 11h)</em></td>
+          </tr>
+        </table>
+        ${
+          message
+            ? `<p><strong>Message laissé :</strong><br>${message}</p>`
+            : ""
+        }
+        <p>Un reçu Stripe a été envoyé à <strong>${email}</strong> pour le paiement effectué.</p>
+        <p style="margin-top: 20px;">Nous vous remercions pour votre confiance et avons hâte de vous accueillir !</p>
+        <p style="margin-top: 30px;">Bien à vous,<br><strong>L’équipe LIVABLŌM</strong></p>
+      </div>
+      <div style="background: #f1f1f1; text-align: center; padding: 15px; font-size: 12px; color: #555;">
+        <p style="margin: 0;">© 2025 LIVABLŌM – Séjours bien-être & confort</p>
+        <p style="margin: 4px 0 0;">Contact : livablom59@gmail.com</p>
+      </div>
+    </div>
+  </div>`;
+
+  await transporter.sendMail({
+    from: '"LIVABLŌM" <livablom59@gmail.com>',
+    to: email,
+    bcc: "livablom59@gmail.com",
+    subject: "Confirmation de votre réservation – LIVABLŌM",
+    html: htmlContent,
+  });
+
+  console.log(`📧 Email de confirmation envoyé à ${email}`);
+}
+
+// --- Route : création de session Stripe ---
+app.post("/create-checkout-session", async (req, res) => {
   try {
-    const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
-    const montantFinal = process.env.TEST_PAYMENT === "true" ? 1 : amount;
+    const formData = req.body;
+    const { logement, email } = formData;
+
+    if (!email || !logement) {
+      return res.status(400).json({ error: "Email ou logement manquant" });
+    }
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      customer_email: email, // ✅ préremplissage automatique sur Stripe
-      line_items: [{
-        price_data: {
-          currency: "eur",
-          product_data: { name: `Réservation ${logement}` },
-          unit_amount: Math.round(montantFinal * 100)
-        },
-        quantity: 1
-      }],
+      customer_email: email,
       mode: "payment",
-      success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
-      cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
-      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
+      line_items: [
+        {
+          price_data: {
+            currency: "eur",
+            product_data: { name: logement },
+            unit_amount: formData.montant * 100,
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: `${process.env.FRONT_URL}/success.html`,
+      cancel_url: `${process.env.FRONT_URL}/cancel.html`,
+      metadata: {
+        logement,
+        email,
+        nom: formData.nom,
+        prenom: formData.prenom,
+        dateArrivee: formData.dateArrivee,
+        dateDepart: formData.dateDepart,
+        message: formData.message || "",
+      },
     });
 
+    console.log("✅ Session Stripe créée :", session.id);
     res.json({ url: session.url });
   } catch (err) {
-    console.error("❌ Erreur création session Stripe:", err);
-    res.status(500).json({ error: "Impossible de créer la session Stripe" });
+    console.error("❌ Erreur création session :", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// --- Route test ---
-app.get("/", (req, res) => res.send("🚀 API LIVABLŌM opérationnelle !"));
+// --- Webhook Stripe ---
+app.post(
+  "/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const sig = req.headers["stripe-signature"];
+    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } catch (err) {
+      console.error("❌ Erreur signature Webhook :", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      const meta = session.metadata;
+
+      try {
+        await sendConfirmationEmail(meta, session);
+      } catch (err) {
+        console.error("Erreur envoi email confirmation :", err);
+      }
+    }
+
+    res.json({ received: true });
+  }
+);
+
+// --- Lancer le serveur ---
 app.listen(port, () => {
-  console.log(`✅ Serveur lancé sur port ${port} (${NODE_ENV}) | Stripe: ${isTest ? "TEST" : "PROD"}`);
+  console.log(`🚀 Serveur Stripe + Mail en ligne sur le port ${port}`);
 });
