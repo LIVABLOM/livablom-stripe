@@ -1,4 +1,4 @@
-// server.js – version complète avec numéro de téléphone inclus
+// server.js – version complète avec numéro de téléphone et heure d'arrivée par logement
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
@@ -66,20 +66,22 @@ const brevoSender = process.env.BREVO_SENDER || "contact@livablom.fr";
 const brevoSenderName = process.env.BREVO_SENDER_NAME || "LIVABLŌM";
 const brevoAdminTo = process.env.BREVO_TO || "livablom59@gmail.com";
 
-if (!brevoApiKey) {
-  console.warn("⚠️ Clé Brevo introuvable, emails non envoyés.");
-} else {
+if (brevoApiKey) {
   const client = SibApiV3Sdk.ApiClient.instance;
   client.authentications['api-key'].apiKey = brevoApiKey;
+} else {
+  console.warn("⚠️ Clé Brevo introuvable, emails non envoyés.");
 }
 
 // --- Envoi des emails ---
-async function sendConfirmationEmail({ name, email, logement, startDate, endDate, personnes, phone }) {
+async function sendConfirmationEmail({ name, email, logement, startDate, endDate, personnes, phone, heureArrivee }) {
   if (!brevoApiKey) return;
 
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
-  // Email client
+  const startDisplay = `${startDate} à partir de ${heureArrivee}`;
+
+  // --- Email client ---
   try {
     await tranEmailApi.sendTransacEmail({
       sender: { name: brevoSenderName, email: brevoSender },
@@ -90,6 +92,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
           <div style="max-width: 600px; margin: auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.05);">
             <h2 style="color: #2E86C1;">Bonjour ${name || ""},</h2>
             <p>Merci pour votre réservation sur <strong>LIVABLŌM</strong>.</p>
+
             <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Logement :</strong></td>
@@ -97,7 +100,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
               </tr>
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${startDate}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${startDisplay}</td>
               </tr>
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td>
@@ -108,13 +111,16 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
                 <td style="padding: 8px; border: 1px solid #ddd;">${personnes || ""}</td>
               </tr>
             </table>
+
             <p style="margin-top: 20px;">Nous vous remercions de votre confiance et vous souhaitons un excellent séjour !</p>
+
             <div style="text-align: center; margin-top: 30px;">
               <a href="https://livablom.fr/contact"
                  style="background-color: #2E86C1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
                 Nous contacter
               </a>
             </div>
+
             <p style="margin-top: 30px; font-size: 0.9em; color: #666;">
               Cordialement,<br/>
               L’équipe <strong>LIVABLŌM</strong>
@@ -128,7 +134,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
     console.error("❌ Erreur email client :", err);
   }
 
-  // Email admin
+  // --- Email admin ---
   if (brevoAdminTo) {
     try {
       await tranEmailApi.sendTransacEmail({
@@ -142,7 +148,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
             <p><strong>Email :</strong> ${email || ""}</p>
             <p><strong>Téléphone :</strong> ${phone || "Non renseigné"}</p>
             <p><strong>Logement réservé :</strong> ${logement}</p>
-            <p><strong>Dates :</strong> ${startDate} → ${endDate} (départ avant 11h)</p>
+            <p><strong>Dates :</strong> ${startDisplay} → ${endDate} (départ avant 11h)</p>
             <p><strong>Nombre de personnes :</strong> ${personnes || ""}</p>
           </div>
         `
@@ -176,6 +182,9 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
         [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
       );
 
+      // Détermination de l'heure d'arrivée selon logement
+      const heureArrivee = session.metadata.logement.toUpperCase() === "BLOM" ? "19h" : "16h";
+
       await sendConfirmationEmail({
         name: session.metadata.name,
         email: session.metadata.email,
@@ -183,7 +192,8 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
         startDate: session.metadata.date_debut,
         endDate: session.metadata.date_fin,
         personnes: session.metadata.personnes,
-        phone: session.metadata.phone
+        phone: session.metadata.phone,
+        heureArrivee
       });
     } catch (err) {
       console.error("❌ Erreur webhook :", err);
@@ -230,10 +240,10 @@ app.post("/api/checkout", async (req, res) => {
     const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
     const montantFinal = process.env.TEST_PAYMENT === "true" ? 1 : amount;
 
-    // Heure d'arrivée selon le logement
-    let heureArrivee = "16h";
-    if (logement.toUpperCase() === "BLOM") heureArrivee = "19h";
+    // --- Heure d'arrivée selon le logement ---
+    const heureArrivee = logement.toUpperCase() === "BLOM" ? "19h" : "16h";
 
+    // --- Création session Stripe ---
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [{
@@ -248,31 +258,23 @@ app.post("/api/checkout", async (req, res) => {
       customer_email: email,
       success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
       cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
-      metadata: {
-        logement,
-        date_debut: startDate,
-        date_fin: endDate,
-        personnes,
-        name,
-        email,
-        phone,
-        arrivalTime: heureArrivee
-      }
+      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
     });
 
+    // --- Envoi email confirmation ---
     await sendConfirmationEmail({
       name,
       email,
       logement,
-      startDate: `${startDate} à partir de ${heureArrivee}`,
+      startDate,
       endDate,
       personnes,
-      phone
+      phone,
+      heureArrivee
     });
 
     res.json({ url: session.url });
     console.log("✅ Session Stripe créée :", session.id);
-
   } catch (err) {
     console.error("❌ Erreur création session Stripe:", err);
     res.status(500).json({ error: "Impossible de créer la session Stripe" });
