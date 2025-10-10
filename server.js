@@ -110,7 +110,11 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
               </tr>
             </table>
 
-            <p style="margin-top: 20px;">Nous vous remercions de votre confiance et vous souhaitons un excellent séjour !</p>
+            <p style="margin-top: 20px;">Nous vous remercions de votre confiance et vous souhaitons un excellent séjour !
+            
+            Pour toute question ou information complémentaire, vous pouvez nous contacter :
+📞 par téléphone au 06 49 83 18 38  
+📧 par e-mail à livablom59@gmail.com</p>
 
             <p style="margin-top: 30px; font-size: 0.9em; color: #666;">
               Cordialement,<br/>
