@@ -1,4 +1,4 @@
-// server.js – version complète corrigée
+// server.js – version complète et corrigée
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
@@ -10,7 +10,7 @@ const { Pool } = require("pg");
 const stripeLib = require("stripe");
 const ical = require("ical");
 const fetch = require("node-fetch");
-const SibApiV3Sdk = require('sib-api-v3-sdk');
+const SibApiV3Sdk = require("sib-api-v3-sdk");
 
 // --- Variables ---
 const NODE_ENV = process.env.NODE_ENV || "development";
@@ -94,22 +94,10 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
             <h2 style="color: #2E86C1;">Bonjour ${name || ""},</h2>
             <p>Merci pour votre réservation sur <strong>LIVABLŌM</strong>.</p>
             <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Logement :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${logement}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${startDate} à partir de ${heureArrivee}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${endDate} (départ avant 11h)</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Nombre de personnes :</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${personnes || ""}</td>
-              </tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Logement :</strong></td><td style="padding: 8px; border: 1px solid #ddd;">${logement}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td><td style="padding: 8px; border: 1px solid #ddd;">${startDate} à partir de ${heureArrivee}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td><td style="padding: 8px; border: 1px solid #ddd;">${endDate} (départ avant 11h)</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Nombre de personnes :</strong></td><td style="padding: 8px; border: 1px solid #ddd;">${personnes || ""}</td></tr>
             </table>
             <p style="margin-top: 20px;">Nous vous remercions de votre confiance et vous souhaitons un excellent séjour !</p>
             <div style="text-align: center; margin-top: 30px;">
@@ -118,10 +106,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
                 Nous contacter
               </a>
             </div>
-            <p style="margin-top: 30px; font-size: 0.9em; color: #666;">
-              Cordialement,<br/>
-              L’équipe <strong>LIVABLŌM</strong>
-            </p>
+            <p style="margin-top: 30px; font-size: 0.9em; color: #666;">Cordialement,<br/>L’équipe <strong>LIVABLŌM</strong></p>
           </div>
         </div>
       `
@@ -156,6 +141,9 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
     }
   }
 }
+
+// --- Express ---
+const app = express();
 
 // --- Stripe Webhook ---
 const endpointSecret = stripeWebhookSecret;
@@ -207,54 +195,9 @@ app.post(
   }
 );
 
-
-// --- Express ---
-const app = express();
-
+// --- Middleware ---
 app.use(cors());
 app.use(bodyParser.json());
-
-// --- Stripe Checkout ---
-app.post("/api/checkout", async (req, res) => {
-  try {
-    console.log("📩 Données reçues sur /api/checkout :", req.body);
-
-    const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
-
-    if (!logement || !startDate || !endDate || !amount || !email) {
-      console.error("❌ Données manquantes :", { logement, startDate, endDate, amount, email });
-      return res.status(400).json({ error: "Champs manquants pour créer la session Stripe" });
-    }
-
-    const montantFinal = process.env.TEST_PAYMENT === "true" ? 1 : amount;
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [{
-        price_data: {
-          currency: "eur",
-          product_data: { name: `Réservation ${logement}` },
-          unit_amount: Math.round(montantFinal * 100)
-        },
-        quantity: 1
-      }],
-      mode: "payment",
-      customer_email: email,
-      success_url: encodeURI(`${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`),
-      cancel_url: encodeURI(`${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`),
-      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
-    });
-
-    console.log("✅ Session Stripe créée :", session.id);
-    res.json({ url: session.url });
-
-  } catch (err) {
-    console.error("❌ Erreur création session Stripe:", err);
-    if (err.raw) console.error("🧩 Détails Stripe :", err.raw.message);
-    res.status(500).json({ error: "Impossible de créer la réservation Stripe", message: err.message });
-  }
-});
-
 
 // --- Stripe Checkout ---
 app.post("/api/checkout", async (req, res) => {
@@ -290,6 +233,7 @@ app.post("/api/checkout", async (req, res) => {
 // --- Route test ---
 app.get("/", (req, res) => res.send("🚀 API LIVABLŌM opérationnelle !"));
 
+// --- Lancement serveur ---
 app.listen(port, () => {
   console.log(`✅ Serveur lancé sur port ${port} (${NODE_ENV}) | Stripe: ${isTest ? "TEST" : "PROD"}`);
 });
