@@ -268,8 +268,8 @@ app.post("/api/checkout", async (req, res) => {
       }],
       mode: "payment",
       customer_email: email,
-      success_url: `${frontendUrl}/${slug}/merci/`,
-      cancel_url: `${frontendUrl}/${slug}/contact/`,
+      success_url: `${frontendUrl}/merci/`,
+      cancel_url: `${frontendUrl}/contact/`,
       metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
     });
 
