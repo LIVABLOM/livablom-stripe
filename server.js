@@ -157,6 +157,57 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
   }
 }
 
+// --- Stripe Webhook ---
+const endpointSecret = stripeWebhookSecret;
+
+app.post(
+  "/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const sig = req.headers["stripe-signature"];
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } catch (err) {
+      console.error("❌ Webhook signature error:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    // ✅ Paiement validé
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      console.log("💳 Paiement confirmé pour :", session.metadata.logement);
+
+      try {
+        // Ajout BDD
+        await pool.query(
+          "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
+          [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
+        );
+
+        // Envoi des emails
+        await sendConfirmationEmail({
+          name: session.metadata.name,
+          email: session.metadata.email,
+          logement: session.metadata.logement,
+          startDate: session.metadata.date_debut,
+          endDate: session.metadata.date_fin,
+          personnes: session.metadata.personnes,
+          phone: session.metadata.phone,
+        });
+
+        console.log("✉️ Emails envoyés suite à paiement validé.");
+      } catch (err) {
+        console.error("❌ Erreur dans le traitement du webhook :", err);
+      }
+    }
+
+    res.status(200).json({ received: true });
+  }
+);
+
+
 // --- Express ---
 const app = express();
 
