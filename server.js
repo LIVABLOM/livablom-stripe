@@ -1,5 +1,5 @@
 // ========================================================
-// 🌸 LIVABLŌM - Server.js (version stable 2025)
+// 🌸 LIVABLŌM - Server.js (version stable corrigée 2025)
 // ========================================================
 
 const path = require("path");
@@ -178,7 +178,18 @@ async function sendConfirmationEmail({
 // ========================================================
 const app = express();
 
-// ⚡ WEBHOOK STRIPE (doit être tout en haut)
+// 🧱 Middleware de vérification du mode Stripe
+function checkStripeMode(req, res, next) {
+  const liveKey = process.env.STRIPE_SECRET_KEY;
+  const testKey = process.env.STRIPE_TEST_KEY;
+  if (isTestMode && liveKey === stripeKey)
+    return res.status(400).json({ error: "Mode incohérent : clé LIVE utilisée en mode TEST." });
+  if (!isTestMode && testKey === stripeKey)
+    return res.status(400).json({ error: "Mode incohérent : clé TEST utilisée en mode LIVE." });
+  next();
+}
+
+// ⚡ WEBHOOK STRIPE (doit être avant tout middleware JSON)
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
@@ -196,6 +207,12 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     console.log("💰 Paiement confirmé par Stripe :", session.id);
 
     try {
+      // empêcher qu’un webhook test touche la base live et inversement
+      if ((isTestMode && session.livemode) || (!isTestMode && !session.livemode)) {
+        console.warn("⚠️ Webhook ignoré : mode incohérent entre Stripe et serveur.");
+        return res.json({ ignored: true });
+      }
+
       if (session.metadata?.logement && session.metadata?.date_debut && session.metadata?.date_fin) {
         await pool.query(
           "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
@@ -224,6 +241,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 // ✅ Les middlewares JSON / CORS doivent venir après
 app.use(cors());
 app.use(bodyParser.json());
+app.use(checkStripeMode);
 
 // ========================================================
 // 💳 API Checkout Stripe
@@ -264,7 +282,7 @@ app.post("/api/checkout", async (req, res) => {
 });
 
 // ========================================================
-// 📅 API Réservations (BDD + Google)
+// 📅 API Réservations
 // ========================================================
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
