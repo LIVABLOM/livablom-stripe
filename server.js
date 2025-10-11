@@ -165,39 +165,47 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
 // ========================================================
 const app = express();
 
-// Webhook Stripe (avant JSON)
+// ========================================================
+// ⚡ WEBHOOK STRIPE (doit être AVANT bodyParser.json())
+// ========================================================
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
+
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
+    console.log(`✅ Webhook Stripe vérifié : ${event.type}`);
   } catch (err) {
-    console.error("❌ Signature Webhook invalide:", err.message);
+    console.error("❌ Webhook de signature invalide :", err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
   if (event.type === "checkout.session.completed") {
-    const s = event.data.object;
+    const session = event.data.object;
+    console.log("💰 Paiement confirmé par Stripe :", session.id);
+
     try {
-      if (s.metadata?.logement && s.metadata?.date_debut && s.metadata?.date_fin) {
+      if (session.metadata?.logement && session.metadata?.date_debut && session.metadata?.date_fin) {
         await pool.query(
           "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
-          [s.metadata.logement, s.metadata.date_debut, s.metadata.date_fin]
+          [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
         );
-        console.log("✅ Réservation insérée:", s.metadata.logement, s.metadata.date_debut);
+        console.log("✅ Réservation enregistrée :", session.metadata.logement, session.metadata.date_debut);
       }
 
       await sendConfirmationEmail({
-        name: s.metadata?.name,
-        email: s.metadata?.email,
-        logement: s.metadata?.logement,
-        startDate: s.metadata?.date_debut,
-        endDate: s.metadata?.date_fin,
-        personnes: s.metadata?.personnes,
-        phone: s.metadata?.phone
+        name: session.metadata?.name,
+        email: session.metadata?.email,
+        logement: session.metadata?.logement,
+        startDate: session.metadata?.date_debut,
+        endDate: session.metadata?.date_fin,
+        personnes: session.metadata?.personnes,
+        phone: session.metadata?.phone
       });
+
+      console.log("✉️ Emails envoyés avec succès à :", session.metadata?.email);
     } catch (err) {
-      console.error("❌ Erreur traitement webhook:", err);
+      console.error("❌ Erreur traitement webhook :", err);
     }
   }
 
