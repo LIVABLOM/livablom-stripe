@@ -1,4 +1,6 @@
-// server.js – version corrigée (test/live + paiement symbolique + 3D Secure)
+// ========================================================
+// 🌸 LIVABLŌM - Server.js (version stable 2025)
+// ========================================================
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
@@ -13,20 +15,17 @@ const fetch = require("node-fetch");
 const SibApiV3Sdk = require("sib-api-v3-sdk");
 
 // ========================================================
-// 🔧 CONFIGURATION GLOBALE
+// ⚙️ CONFIGURATION GLOBALE
 // ========================================================
 const NODE_ENV = process.env.NODE_ENV || "development";
 
-// Basculer automatiquement entre TEST et LIVE selon ta variable MODE_RAYURE
 const isTestMode =
   (process.env.MODE_RAYURE || "").toUpperCase() === "TEST" ||
   process.env.STRIPE_MODE === "test" ||
   NODE_ENV === "development";
 
-// Paiement symbolique à 1 € si TRUE
 const isPaymentTest = (process.env.TEST_PAIEMENT || "").toUpperCase() === "TRUE";
 
-// Clés Stripe selon le mode
 const stripeKey = isTestMode
   ? process.env.CLÉ_TEST_STRAPPE || process.env.STRIPE_TEST_KEY
   : process.env.STRIPE_SECRET_KEY;
@@ -35,30 +34,31 @@ const stripeWebhookSecret = isTestMode
   ? process.env.STRIPE_WEBHOOK_TEST_SECRET
   : process.env.STRIPE_WEBHOOK_SECRET;
 
-// URLs et port
-const frontendUrl = process.env.URL_FRONTEND || process.env.FRONTEND_URL || "http://localhost:4000";
+const frontendUrl =
+  process.env.URL_FRONTEND || process.env.FRONTEND_URL || "http://localhost:4000";
 const port = process.env.PORT || 3000;
 
 const stripe = stripeLib(stripeKey);
 
 // ========================================================
-// 🗄️ Connexion PostgreSQL
+// 🗄️ PostgreSQL
 // ========================================================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || process.env.URL_BASE_DE_DONNÉES,
   ssl: { rejectUnauthorized: false },
 });
 
-pool.connect()
+pool
+  .connect()
   .then(() => console.log("✅ Connecté à PostgreSQL"))
-  .catch(err => console.error("❌ Erreur connexion BDD:", err));
+  .catch((err) => console.error("❌ Erreur connexion BDD:", err));
 
 // ========================================================
-// 🗓️ Chargement des calendriers iCal Google
+// 📅 iCal Google
 // ========================================================
 const calendars = {
   LIVA: ["https://calendar.google.com/calendar/ical/.../basic.ics"],
-  BLOM: ["https://calendar.google.com/calendar/ical/.../basic.ics"]
+  BLOM: ["https://calendar.google.com/calendar/ical/.../basic.ics"],
 };
 
 async function fetchICal(url, logement) {
@@ -68,14 +68,14 @@ async function fetchICal(url, logement) {
     const data = await res.text();
     const parsed = ical.parseICS(data);
     return Object.values(parsed)
-      .filter(ev => ev.start && ev.end)
-      .map(ev => ({
+      .filter((ev) => ev.start && ev.end)
+      .map((ev) => ({
         title: ev.summary || "Réservé (Google)",
         start: ev.start,
         end: ev.end,
         logement,
         display: "background",
-        color: "#ff0000"
+        color: "#ff0000",
       }));
   } catch (err) {
     console.error("❌ Erreur iCal pour", logement, url, err);
@@ -84,7 +84,7 @@ async function fetchICal(url, logement) {
 }
 
 // ========================================================
-// 📧 Brevo (Sendinblue)
+// ✉️ Brevo (Sendinblue)
 // ========================================================
 const brevoApiKey = process.env.CLÉ_API_BREVO || process.env.BREVO_API_KEY;
 const brevoSender = process.env.BREVO_SENDER || "contact@livablom.fr";
@@ -102,21 +102,34 @@ if (brevoApiKey) {
 // 🧩 Fonctions utilitaires
 // ========================================================
 function normalizeLogement(str) {
-  return String(str || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  return String(str || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
 }
 
 function slugify(str) {
-  return String(str || "blom")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9-_]/g, "")
-    .toLowerCase() || "blom";
+  return (
+    String(str || "blom")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9-_]/g, "")
+      .toLowerCase() || "blom"
+  );
 }
 
 // ========================================================
-// ✉️ Envoi des emails de confirmation
+// 📩 Envoi des emails
 // ========================================================
-async function sendConfirmationEmail({ name, email, logement, startDate, endDate, personnes, phone }) {
+async function sendConfirmationEmail({
+  name,
+  email,
+  logement,
+  startDate,
+  endDate,
+  personnes,
+  phone,
+}) {
   if (!brevoApiKey) return;
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
   const heureArrivee = normalizeLogement(logement) === "BLOM" ? "19h" : "16h";
@@ -131,8 +144,8 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
         <p>Merci pour votre réservation <b>${logement}</b>.</p>
         <p><b>Arrivée :</b> ${startDate} à partir de ${heureArrivee}</p>
         <p><b>Départ :</b> ${endDate} avant 11h</p>
-        <a href="https://livablom.fr/contact">Nous contacter</a>
-      `
+        <p>Pour toute question, <a href="https://livablom.fr/contact">contactez-nous</a>.</p>
+      `,
     });
     console.log("✉️ Email client envoyé :", email);
   } catch (err) {
@@ -151,7 +164,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
           <p><b>Email :</b> ${email}</p>
           <p><b>Téléphone :</b> ${phone}</p>
           <p><b>Dates :</b> ${startDate} → ${endDate}</p>
-        `
+        `,
       });
       console.log("✉️ Email admin envoyé à :", brevoAdminTo);
     } catch (err) {
@@ -161,13 +174,11 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
 }
 
 // ========================================================
-// 🚦 Initialisation Express
+// 🚦 Serveur Express
 // ========================================================
 const app = express();
 
-// ========================================================
-// ⚡ WEBHOOK STRIPE (doit être AVANT bodyParser.json())
-// ========================================================
+// ⚡ WEBHOOK STRIPE (doit être tout en haut)
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
@@ -190,7 +201,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
           "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
           [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
         );
-        console.log("✅ Réservation enregistrée :", session.metadata.logement, session.metadata.date_debut);
+        console.log("✅ Réservation enregistrée :", session.metadata.logement);
       }
 
       await sendConfirmationEmail({
@@ -200,10 +211,8 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         startDate: session.metadata?.date_debut,
         endDate: session.metadata?.date_fin,
         personnes: session.metadata?.personnes,
-        phone: session.metadata?.phone
+        phone: session.metadata?.phone,
       });
-
-      console.log("✉️ Emails envoyés avec succès à :", session.metadata?.email);
     } catch (err) {
       console.error("❌ Erreur traitement webhook :", err);
     }
@@ -212,25 +221,64 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
   res.json({ received: true });
 });
 
-// Middlewares
+// ✅ Les middlewares JSON / CORS doivent venir après
 app.use(cors());
 app.use(bodyParser.json());
 
 // ========================================================
-// 🧭 API Réservations (BDD + Google)
+// 💳 API Checkout Stripe
+// ========================================================
+app.post("/api/checkout", async (req, res) => {
+  try {
+    const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
+    if (!logement || !startDate || !endDate || !amount || !email)
+      return res.status(400).json({ error: "Champs manquants" });
+
+    const montantFinal = isPaymentTest ? 1 : amount;
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      payment_method_options: { card: { request_three_d_secure: "any" } },
+      line_items: [
+        {
+          price_data: {
+            currency: "eur",
+            product_data: { name: `Réservation ${logement}` },
+            unit_amount: Math.round(montantFinal * 100),
+          },
+          quantity: 1,
+        },
+      ],
+      mode: "payment",
+      customer_email: email,
+      success_url: `${frontendUrl}/merci/`,
+      cancel_url: `${frontendUrl}/contact/`,
+      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone },
+    });
+
+    console.log(`✅ Session Stripe ${isTestMode ? "TEST" : "LIVE"} créée : ${session.id}`);
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("❌ Erreur création session Stripe:", err);
+    res.status(500).json({ error: "Impossible de créer la session Stripe" });
+  }
+});
+
+// ========================================================
+// 📅 API Réservations (BDD + Google)
 // ========================================================
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
   if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
+
   try {
     let events = [];
     const result = await pool.query("SELECT date_debut, date_fin FROM reservations WHERE logement = $1", [logement]);
-    events = result.rows.map(r => ({
+    events = result.rows.map((r) => ({
       start: r.date_debut,
       end: r.date_fin,
       display: "background",
       color: "#ff0000",
-      title: "Réservé (BDD)"
+      title: "Réservé (BDD)",
     }));
     for (const url of calendars[logement]) {
       const gEvents = await fetchICal(url, logement);
@@ -244,53 +292,23 @@ app.get("/api/reservations/:logement", async (req, res) => {
 });
 
 // ========================================================
-// 💳 API Stripe Checkout
-// ========================================================
-app.post("/api/checkout", async (req, res) => {
-  try {
-    const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
-    if (!logement || !startDate || !endDate || !amount || !email)
-      return res.status(400).json({ error: "Champs manquants" });
-
-    const montantFinal = isPaymentTest ? 1 : amount;
-    const slug = slugify(logement);
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      payment_method_options: { card: { request_three_d_secure: "any" } },
-      line_items: [{
-        price_data: {
-          currency: "eur",
-          product_data: { name: `Réservation ${logement}` },
-          unit_amount: Math.round(montantFinal * 100)
-        },
-        quantity: 1
-      }],
-      mode: "payment",
-      customer_email: email,
-      success_url: `${frontendUrl}/merci/`,
-      cancel_url: `${frontendUrl}/contact/`,
-      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
-    });
-
-    console.log(`✅ Session Stripe ${isTestMode ? "TEST" : "LIVE"} créée :`, session.id);
-    res.json({ url: session.url });
-  } catch (err) {
-    console.error("❌ Erreur création session Stripe:", err);
-    res.status(500).json({ error: "Impossible de créer la session Stripe", message: err.message });
-  }
-});
-
-// ========================================================
-// 🌐 Route de test
+// 🌐 Test
 // ========================================================
 app.get("/", (req, res) =>
-  res.send(`🚀 API LIVABLŌM opérationnelle ! Mode: ${isTestMode ? "TEST" : "LIVE"} | Paiement: ${isPaymentTest ? "1€" : "réel"}`)
+  res.send(
+    `🚀 API LIVABLŌM opérationnelle ! Mode: ${isTestMode ? "TEST" : "LIVE"} | Paiement: ${
+      isPaymentTest ? "1€" : "réel"
+    }`
+  )
 );
 
 // ========================================================
 // 🚀 Lancement serveur
 // ========================================================
 app.listen(port, () => {
-  console.log(`✅ Serveur lancé sur port ${port} (${NODE_ENV}) | Mode: ${isTestMode ? "TEST" : "LIVE"} | Paiement: ${isPaymentTest ? "1€" : "réel"}`);
+  console.log(
+    `✅ Serveur lancé sur port ${port} (${NODE_ENV}) | Mode: ${
+      isTestMode ? "TEST" : "LIVE"
+    } | Paiement: ${isPaymentTest ? "1€" : "réel"}`
+  );
 });
