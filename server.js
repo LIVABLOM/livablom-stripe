@@ -285,6 +285,11 @@ app.post("/api/checkout", async (req, res) => {
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
+      payment_method_options: {
+        card: {
+          request_three_d_secure: "any" // ✅ Forcer 3D Secure si la banque l'exige
+        }
+      },
       line_items: [{
         price_data: {
           currency: "eur",
@@ -308,6 +313,7 @@ app.post("/api/checkout", async (req, res) => {
     res.status(500).json({ error: "Impossible de créer la session Stripe", message: err.message });
   }
 });
+
 
 // --- Route test ---
 app.get("/", (req, res) => res.send("🚀 API LIVABLŌM opérationnelle !"));
