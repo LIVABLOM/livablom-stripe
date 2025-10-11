@@ -1,4 +1,4 @@
-// server.js – version complète avec numéro de téléphone inclus
+// server.js – version complète corrigée
 
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
@@ -79,6 +79,9 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
 
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
+  // Heure d'arrivée selon logement
+  const heureArrivee = logement.toUpperCase() === "BLOM" ? "19h" : "16h";
+
   // --- Email client ---
   try {
     await tranEmailApi.sendTransacEmail({
@@ -87,49 +90,40 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
       subject: `Confirmation de réservation - LIVABLŌM`,
       htmlContent: `
         <div style="font-family: 'Arial', sans-serif; color: #333; background-color: #f9f9f9; padding: 20px;">
-  <div style="max-width: 600px; margin: auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.05);">
-    <h2 style="color: #2E86C1;">Bonjour ${name || ""},</h2>
-    <p>Merci pour votre réservation sur <strong>LIVABLŌM</strong>.</p>
-
-    <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
-      <tr>
-        <td style="padding: 8px; border: 1px solid #ddd;"><strong>Logement :</strong></td>
-        <td style="padding: 8px; border: 1px solid #ddd;">${logement}</td>
-      </tr>
-      <tr>
-        <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td>
-        <td style="padding: 8px; border: 1px solid #ddd;">${startDate} à partir de 16h</td>
-      </tr>
-      <tr>
-        <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td>
-        <td style="padding: 8px; border: 1px solid #ddd;">${endDate} (départ avant 11h)</td>
-      </tr>
-      <tr>
-        <td style="padding: 8px; border: 1px solid #ddd;"><strong>Nombre de personnes :</strong></td>
-        <td style="padding: 8px; border: 1px solid #ddd;">${personnes || ""}</td>
-      </tr>
-    </table>
-
-    <p style="margin-top: 20px;">
-      Nous vous remercions de votre confiance et vous souhaitons un excellent séjour !
-    </p>
-
-    <div style="text-align: center; margin-top: 30px;">
-      <a href="https://livablom.fr/contact"
-         style="background-color: #2E86C1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-        Nous contacter
-      </a>
-    </div>
-
-    <p style="margin-top: 30px; font-size: 0.9em; color: #666;">
-      Cordialement,<br/>
-      L’équipe <strong>LIVABLŌM</strong>
-    </p>
-  </div>
-</div>
-
-
-
+          <div style="max-width: 600px; margin: auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.05);">
+            <h2 style="color: #2E86C1;">Bonjour ${name || ""},</h2>
+            <p>Merci pour votre réservation sur <strong>LIVABLŌM</strong>.</p>
+            <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Logement :</strong></td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${logement}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date d'arrivée :</strong></td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${startDate} à partir de ${heureArrivee}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Date de départ :</strong></td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${endDate} (départ avant 11h)</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;"><strong>Nombre de personnes :</strong></td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${personnes || ""}</td>
+              </tr>
+            </table>
+            <p style="margin-top: 20px;">Nous vous remercions de votre confiance et vous souhaitons un excellent séjour !</p>
+            <div style="text-align: center; margin-top: 30px;">
+              <a href="https://livablom.fr/contact"
+                 style="background-color: #2E86C1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+                Nous contacter
+              </a>
+            </div>
+            <p style="margin-top: 30px; font-size: 0.9em; color: #666;">
+              Cordialement,<br/>
+              L’équipe <strong>LIVABLŌM</strong>
+            </p>
+          </div>
+        </div>
       `
     });
     console.log("✉️ Email client envoyé :", email);
@@ -151,7 +145,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
             <p><strong>Email :</strong> ${email || ""}</p>
             <p><strong>Téléphone :</strong> ${phone || "Non renseigné"}</p>
             <p><strong>Logement réservé :</strong> ${logement}</p>
-            <p><strong>Dates :</strong> ${startDate} à partir de 16h → ${endDate} (départ avant 11h)</p>
+            <p><strong>Dates :</strong> ${startDate} à partir de ${heureArrivee} → ${endDate} (départ avant 11h)</p>
             <p><strong>Nombre de personnes :</strong> ${personnes || ""}</p>
           </div>
         `
@@ -166,72 +160,50 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
 // --- Express ---
 const app = express();
 
-// Webhook Stripe
-app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, res) => {
-  const sig = req.headers["stripe-signature"];
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
-  } catch (err) {
-    console.error("❌ Webhook signature error:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
-    try {
-      await pool.query(
-        "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
-        [session.metadata.logement, session.metadata.date_debut, session.metadata.date_fin]
-      );
-
-      await sendConfirmationEmail({
-        name: session.metadata.name,
-        email: session.metadata.email,
-        logement: session.metadata.logement,
-        startDate: session.metadata.date_debut,
-        endDate: session.metadata.date_fin,
-        personnes: session.metadata.personnes,
-        phone: session.metadata.phone
-      });
-    } catch (err) {
-      console.error("❌ Erreur webhook :", err);
-    }
-  }
-
-  res.json({ received: true });
-});
-
 app.use(cors());
 app.use(bodyParser.json());
 
-// --- Endpoint réservations ---
-app.get("/api/reservations/:logement", async (req, res) => {
-  const logement = req.params.logement.toUpperCase();
-  if (!calendars[logement]) return res.status(404).json({ error: "Logement inconnu" });
-
+// --- Stripe Checkout ---
+app.post("/api/checkout", async (req, res) => {
   try {
-    let events = [];
-    const result = await pool.query("SELECT date_debut, date_fin FROM reservations WHERE logement = $1", [logement]);
-    events = result.rows.map(r => ({
-      start: r.date_debut,
-      end: r.date_fin,
-      display: "background",
-      color: "#ff0000",
-      title: "Réservé (BDD)"
-    }));
+    console.log("📩 Données reçues sur /api/checkout :", req.body);
 
-    for (const url of calendars[logement]) {
-      const gEvents = await fetchICal(url, logement);
-      events = events.concat(gEvents);
+    const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
+
+    if (!logement || !startDate || !endDate || !amount || !email) {
+      console.error("❌ Données manquantes :", { logement, startDate, endDate, amount, email });
+      return res.status(400).json({ error: "Champs manquants pour créer la session Stripe" });
     }
 
-    res.json(events);
+    const montantFinal = process.env.TEST_PAYMENT === "true" ? 1 : amount;
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "eur",
+          product_data: { name: `Réservation ${logement}` },
+          unit_amount: Math.round(montantFinal * 100)
+        },
+        quantity: 1
+      }],
+      mode: "payment",
+      customer_email: email,
+      success_url: encodeURI(`${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`),
+      cancel_url: encodeURI(`${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`),
+      metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
+    });
+
+    console.log("✅ Session Stripe créée :", session.id);
+    res.json({ url: session.url });
+
   } catch (err) {
-    console.error("❌ Erreur récupération:", err);
-    res.status(500).json({ error: "Impossible de charger les réservations" });
+    console.error("❌ Erreur création session Stripe:", err);
+    if (err.raw) console.error("🧩 Détails Stripe :", err.raw.message);
+    res.status(500).json({ error: "Impossible de créer la réservation Stripe", message: err.message });
   }
 });
+
 
 // --- Stripe Checkout ---
 app.post("/api/checkout", async (req, res) => {
@@ -251,8 +223,8 @@ app.post("/api/checkout", async (req, res) => {
       }],
       mode: "payment",
       customer_email: email,
-      success_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`,
-      cancel_url: `${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`,
+      success_url: encodeURI(`${frontendUrl}/${(logement || "blom").toLowerCase()}/merci`),
+      cancel_url: encodeURI(`${frontendUrl}/${(logement || "blom").toLowerCase()}/annule`),
       metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone }
     });
 
