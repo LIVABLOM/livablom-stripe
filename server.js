@@ -1,5 +1,5 @@
 // ========================================================
-// 🌸 LIVABLŌM - Server.js (version stable corrigée 2025)
+// 🌸 LIVABLŌM - Server.js (version finale 2025)
 // ========================================================
 
 const path = require("path");
@@ -18,16 +18,15 @@ const SibApiV3Sdk = require("sib-api-v3-sdk");
 // ⚙️ CONFIGURATION GLOBALE
 // ========================================================
 const NODE_ENV = process.env.NODE_ENV || "development";
-
 const isTestMode =
-  (process.env.MODE_RAYURE || "").toUpperCase() === "TEST" ||
-  process.env.STRIPE_MODE === "test" ||
+  (process.env.STRIPE_MODE || "").toLowerCase() === "test" ||
   NODE_ENV === "development";
 
-const isPaymentTest = (process.env.TEST_PAIEMENT || "").toUpperCase() === "TRUE";
+const isPaymentTest =
+  (process.env.TEST_PAIEMENT || process.env.TEST_PAYMENT || "").toUpperCase() === "TRUE";
 
 const stripeKey = isTestMode
-  ? process.env.CLÉ_TEST_STRAPPE || process.env.STRIPE_TEST_KEY
+  ? process.env.STRIPE_TEST_KEY
   : process.env.STRIPE_SECRET_KEY;
 
 const stripeWebhookSecret = isTestMode
@@ -35,7 +34,10 @@ const stripeWebhookSecret = isTestMode
   : process.env.STRIPE_WEBHOOK_SECRET;
 
 const frontendUrl =
-  process.env.URL_FRONTEND || process.env.FRONTEND_URL || "http://localhost:4000";
+  NODE_ENV === "production"
+    ? process.env.FRONTEND_URL || "https://livablom.fr"
+    : process.env.FRONTEND_URL || "http://localhost:4001";
+
 const port = process.env.PORT || 3000;
 
 const stripe = stripeLib(stripeKey);
@@ -44,7 +46,7 @@ const stripe = stripeLib(stripeKey);
 // 🗄️ PostgreSQL
 // ========================================================
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || process.env.URL_BASE_DE_DONNÉES,
+  connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
 
@@ -178,18 +180,7 @@ async function sendConfirmationEmail({
 // ========================================================
 const app = express();
 
-// 🧱 Middleware de vérification du mode Stripe
-function checkStripeMode(req, res, next) {
-  const liveKey = process.env.STRIPE_SECRET_KEY;
-  const testKey = process.env.STRIPE_TEST_KEY;
-  if (isTestMode && liveKey === stripeKey)
-    return res.status(400).json({ error: "Mode incohérent : clé LIVE utilisée en mode TEST." });
-  if (!isTestMode && testKey === stripeKey)
-    return res.status(400).json({ error: "Mode incohérent : clé TEST utilisée en mode LIVE." });
-  next();
-}
-
-// ⚡ WEBHOOK STRIPE (doit être avant tout middleware JSON)
+// ⚡ WEBHOOK STRIPE (doit être tout en haut)
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
@@ -207,12 +198,6 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     console.log("💰 Paiement confirmé par Stripe :", session.id);
 
     try {
-      // empêcher qu’un webhook test touche la base live et inversement
-      if ((isTestMode && session.livemode) || (!isTestMode && !session.livemode)) {
-        console.warn("⚠️ Webhook ignoré : mode incohérent entre Stripe et serveur.");
-        return res.json({ ignored: true });
-      }
-
       if (session.metadata?.logement && session.metadata?.date_debut && session.metadata?.date_fin) {
         await pool.query(
           "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
@@ -241,7 +226,6 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 // ✅ Les middlewares JSON / CORS doivent venir après
 app.use(cors());
 app.use(bodyParser.json());
-app.use(checkStripeMode);
 
 // ========================================================
 // 💳 API Checkout Stripe
@@ -253,6 +237,7 @@ app.post("/api/checkout", async (req, res) => {
       return res.status(400).json({ error: "Champs manquants" });
 
     const montantFinal = isPaymentTest ? 1 : amount;
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       payment_method_options: { card: { request_three_d_secure: "any" } },
@@ -282,7 +267,7 @@ app.post("/api/checkout", async (req, res) => {
 });
 
 // ========================================================
-// 📅 API Réservations
+// 📅 API Réservations (BDD + Google)
 // ========================================================
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
@@ -310,7 +295,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
 });
 
 // ========================================================
-// 🌐 Test
+// 🌐 Test route
 // ========================================================
 app.get("/", (req, res) =>
   res.send(
@@ -325,8 +310,8 @@ app.get("/", (req, res) =>
 // ========================================================
 app.listen(port, () => {
   console.log(
-    `✅ Serveur lancé sur port ${port} (${NODE_ENV}) | Mode: ${
-      isTestMode ? "TEST" : "LIVE"
-    } | Paiement: ${isPaymentTest ? "1€" : "réel"}`
+    `✅ Serveur lancé sur port ${port} (${NODE_ENV}) | Mode: ${isTestMode ? "TEST" : "LIVE"} | Paiement: ${
+      isPaymentTest ? "1€" : "réel"
+    }`
   );
 });
