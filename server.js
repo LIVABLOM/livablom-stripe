@@ -22,8 +22,15 @@ const isTestMode =
   (process.env.STRIPE_MODE || "").toLowerCase() === "test" ||
   NODE_ENV === "development";
 
-const isPaymentTest =
-  (process.env.TEST_PAIEMENT || process.env.TEST_PAYMENT || "").toUpperCase() === "TRUE";
+// ✅ Meilleure logique pour TEST_PAIEMENT
+const isPaymentTest = (() => {
+  const val =
+    process.env.TEST_PAIEMENT ||
+    process.env.TEST_PAYMENT ||
+    process.env.PAIEMENT_TEST ||
+    "";
+  return val.trim().toLowerCase() === "true" || val.trim() === "1";
+})();
 
 const stripeKey = isTestMode
   ? process.env.STRIPE_TEST_KEY
@@ -267,7 +274,7 @@ app.post("/api/checkout", async (req, res) => {
 });
 
 // ========================================================
-// 📅 API Réservations (BDD + Google)
+// 📅 API Réservations
 // ========================================================
 app.get("/api/reservations/:logement", async (req, res) => {
   const logement = req.params.logement.toUpperCase();
@@ -295,7 +302,7 @@ app.get("/api/reservations/:logement", async (req, res) => {
 });
 
 // ========================================================
-// 🧭 Nouvelle route /api/config (frontend -> test ou réel)
+// 🧭 Nouvelle route /api/config
 // ========================================================
 app.get("/api/config", (req, res) => {
   res.json({
