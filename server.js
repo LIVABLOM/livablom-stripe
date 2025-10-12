@@ -295,6 +295,16 @@ app.get("/api/reservations/:logement", async (req, res) => {
 });
 
 // ========================================================
+// 🧭 Nouvelle route /api/config (frontend -> test ou réel)
+// ========================================================
+app.get("/api/config", (req, res) => {
+  res.json({
+    mode: isTestMode ? "test" : "live",
+    testPayment: isPaymentTest,
+  });
+});
+
+// ========================================================
 // 🌐 Test route
 // ========================================================
 app.get("/", (req, res) =>
