@@ -24,6 +24,8 @@ console.log("PAIEMENT_TEST:", process.env.PAIEMENT_TEST);
 console.log("STRIPE_SECRET_KEY (tronc):", (process.env.STRIPE_SECRET_KEY || "").slice(0, 10));
 console.log("STRIPE_TEST_KEY (tronc):", (process.env.STRIPE_TEST_KEY || "").slice(0, 10));
 console.log("------------------------------------------");
+console.log("🧩 Valeur brute TEST_PAIEMENT :", process.env.TEST_PAIEMENT);
+console.log("🧠 Interprétation Node (isPaymentTest) :", isPaymentTest);
 
 
 // ========================================================
