@@ -45,6 +45,10 @@ console.log("STRIPE_TEST_KEY (tronc):", (process.env.STRIPE_TEST_KEY || "").slic
 console.log("------------------------------------------");
 console.log("🧩 Valeur brute TEST_PAIEMENT :", process.env.TEST_PAIEMENT);
 console.log("🧠 Interprétation Node (isPaymentTest) :", isPaymentTest);
+console.log("🛠️ TEST_PAIEMENT brute :", process.env.TEST_PAIEMENT);
+console.log("🛠️ TEST_PAYMENT brute :", process.env.TEST_PAYMENT);
+console.log("🛠️ PAIEMENT_TEST brute :", process.env.PAIEMENT_TEST);
+console.log("🛠️ isPaymentTest final :", isPaymentTest);
 
 const stripeKey = isTestMode
   ? process.env.STRIPE_TEST_KEY
