@@ -29,7 +29,8 @@ const isPaymentTest = (() => {
     process.env.TEST_PAYMENT ||
     process.env.PAIEMENT_TEST ||
     "";
-  return val.trim().toLowerCase() === "true" || val.trim() === "1";
+  const normalized = val.trim().toLowerCase();
+  return ["true", "1", "yes", "vrai", "on"].includes(normalized);
 })();
 
 console.log("🔍 ENVIRONMENT CHECK -----------------------");
