@@ -14,20 +14,6 @@ const ical = require("ical");
 const fetch = require("node-fetch");
 const SibApiV3Sdk = require("sib-api-v3-sdk");
 
-console.log("🔍 ENVIRONMENT CHECK -----------------------");
-console.log("NODE_ENV:", process.env.NODE_ENV);
-console.log("STRIPE_MODE:", process.env.STRIPE_MODE);
-console.log("MODE_STRIPE:", process.env.MODE_STRIPE);
-console.log("TEST_PAIEMENT:", process.env.TEST_PAIEMENT);
-console.log("TEST_PAYMENT:", process.env.TEST_PAYMENT);
-console.log("PAIEMENT_TEST:", process.env.PAIEMENT_TEST);
-console.log("STRIPE_SECRET_KEY (tronc):", (process.env.STRIPE_SECRET_KEY || "").slice(0, 10));
-console.log("STRIPE_TEST_KEY (tronc):", (process.env.STRIPE_TEST_KEY || "").slice(0, 10));
-console.log("------------------------------------------");
-console.log("🧩 Valeur brute TEST_PAIEMENT :", process.env.TEST_PAIEMENT);
-console.log("🧠 Interprétation Node (isPaymentTest) :", isPaymentTest);
-
-
 // ========================================================
 // ⚙️ CONFIGURATION GLOBALE
 // ========================================================
@@ -45,6 +31,19 @@ const isPaymentTest = (() => {
     "";
   return val.trim().toLowerCase() === "true" || val.trim() === "1";
 })();
+
+console.log("🔍 ENVIRONMENT CHECK -----------------------");
+console.log("NODE_ENV:", process.env.NODE_ENV);
+console.log("STRIPE_MODE:", process.env.STRIPE_MODE);
+console.log("MODE_STRIPE:", process.env.MODE_STRIPE);
+console.log("TEST_PAIEMENT:", process.env.TEST_PAIEMENT);
+console.log("TEST_PAYMENT:", process.env.TEST_PAYMENT);
+console.log("PAIEMENT_TEST:", process.env.PAIEMENT_TEST);
+console.log("STRIPE_SECRET_KEY (tronc):", (process.env.STRIPE_SECRET_KEY || "").slice(0, 10));
+console.log("STRIPE_TEST_KEY (tronc):", (process.env.STRIPE_TEST_KEY || "").slice(0, 10));
+console.log("------------------------------------------");
+console.log("🧩 Valeur brute TEST_PAIEMENT :", process.env.TEST_PAIEMENT);
+console.log("🧠 Interprétation Node (isPaymentTest) :", isPaymentTest);
 
 const stripeKey = isTestMode
   ? process.env.STRIPE_TEST_KEY
