@@ -172,18 +172,21 @@ async function sendConfirmationEmail({
   };
 
   // --- Choix du style et du texte selon le logement ---
-  const isBlom = logement === "BLOM";
-  const logementClean = isBlom
-    ? "BLŌM – Spa & Détente"
-    : "LIVA – Confort & Sérénité";
+const logementNormalized = normalizeLogement(logement);
+const isBlom = logementNormalized === "BLOM";
 
-  const colorTheme = isBlom ? "#c59c5d" : "#5da0c5";
-  const accentText = isBlom
-    ? "un moment de détente et de bien-être unique 💆‍♀️"
-    : "un séjour confortable et apaisant 🏡";
+const logementClean = isBlom
+  ? "BLŌM – Spa & Détente"
+  : "LIVA – Confort & Sérénité";
 
-  const arrivalHour = "16h00";
-  const departureHour = "11h00";
+const colorTheme = isBlom ? "#c59c5d" : "#5da0c5";
+const accentText = isBlom
+  ? "un moment de détente et de bien-être unique 💆‍♀️"
+  : "un séjour confortable et apaisant 🏡";
+
+const arrivalHour = "16h00";
+const departureHour = "11h00";
+
 
   // --- Contenu HTML du mail ---
   const emailHtml = `
