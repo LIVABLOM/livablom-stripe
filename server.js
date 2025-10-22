@@ -280,35 +280,6 @@ async function sendConfirmationEmail({
   }
 }
 
-
-  // 📩 Copie à l’administrateur
-  if (brevoAdminTo) {
-    try {
-      await tranEmailApi.sendTransacEmail({
-        sender: { name: brevoSenderName, email: brevoSender },
-        to: [{ email: brevoAdminTo }],
-        subject: `Nouvelle réservation - ${logementClean}`,
-        htmlContent: `
-          <h3>Nouvelle réservation</h3>
-          <p><b>Nom :</b> ${name}</p>
-          <p><b>Email :</b> ${email}</p>
-          <p><b>Téléphone :</b> ${phone}</p>
-          <p><b>Logement :</b> ${logementClean}</p>
-          <p><b>Dates :</b> ${formatDate(startDate)} → ${formatDate(endDate)}</p>
-          ${
-            personnes
-              ? `<p><b>Nombre de personnes :</b> ${personnes}</p>`
-              : ""
-          }
-        `,
-      });
-      console.log("✉️ Copie admin envoyée à :", brevoAdminTo);
-    } catch (err) {
-      console.error("❌ Erreur email admin:", err);
-    }
-  }
-}
-
 // ========================================================
 // 🚦 Serveur Express
 // ========================================================
