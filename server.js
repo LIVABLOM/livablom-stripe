@@ -1,5 +1,5 @@
 // ========================================================
-// 🌸 LIVABLŌM - Server.js (version finale 2025)
+// 🌸 LIVABLŌM - Server.js (version finale 2025 corrigée)
 // ========================================================
 
 const path = require("path");
@@ -45,9 +45,6 @@ console.log("STRIPE_TEST_KEY (tronc):", (process.env.STRIPE_TEST_KEY || "").slic
 console.log("------------------------------------------");
 console.log("🧩 Valeur brute TEST_PAIEMENT :", process.env.TEST_PAIEMENT);
 console.log("🧠 Interprétation Node (isPaymentTest) :", isPaymentTest);
-console.log("🛠️ TEST_PAIEMENT brute :", process.env.TEST_PAIEMENT);
-console.log("🛠️ TEST_PAYMENT brute :", process.env.TEST_PAYMENT);
-console.log("🛠️ PAIEMENT_TEST brute :", process.env.PAIEMENT_TEST);
 console.log("🛠️ isPaymentTest final :", isPaymentTest);
 
 const stripeKey = isTestMode
@@ -64,7 +61,6 @@ const frontendUrl =
     : process.env.FRONTEND_URL || "http://localhost:4001";
 
 const port = process.env.PORT || 3000;
-
 const stripe = stripeLib(stripeKey);
 
 // ========================================================
@@ -74,7 +70,6 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
 });
-
 
 pool
   .connect()
@@ -149,15 +144,7 @@ function slugify(str) {
 // ========================================================
 // 📩 Envoi des emails (version différenciée LIVA / BLŌM)
 // ========================================================
-async function sendConfirmationEmail({
-  name,
-  email,
-  logement,
-  startDate,
-  endDate,
-  personnes,
-  phone,
-}) {
+async function sendConfirmationEmail({ name, email, logement, startDate, endDate, personnes, phone }) {
   if (!brevoApiKey) return;
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
@@ -171,78 +158,55 @@ async function sendConfirmationEmail({
     });
   };
 
-  // --- Choix du style et du texte selon le logement ---
-const logementNormalized = normalizeLogement(logement);
-const isBlom = logementNormalized === "BLOM";
+  const logementNormalized = normalizeLogement(logement);
+  const isBlom = logementNormalized === "BLOM";
+  const logementClean = isBlom ? "BLŌM – Spa & Détente" : "LIVA – Confort & Sérénité";
+  const colorTheme = isBlom ? "#c59c5d" : "#5da0c5";
+  const accentText = isBlom
+    ? "un moment de détente et de bien-être unique 💆‍♀️"
+    : "un séjour confortable et apaisant 🏡";
+  const arrivalHour = "16h00";
+  const departureHour = "11h00";
 
-const logementClean = isBlom
-  ? "BLŌM – Spa & Détente"
-  : "LIVA – Confort & Sérénité";
-
-const colorTheme = isBlom ? "#c59c5d" : "#5da0c5";
-const accentText = isBlom
-  ? "un moment de détente et de bien-être unique 💆‍♀️"
-  : "un séjour confortable et apaisant 🏡";
-
-const arrivalHour = "16h00";
-const departureHour = "11h00";
-
-
-  // --- Contenu HTML du mail ---
+  // --- HTML mail client ---
   const emailHtml = `
-    <div style="font-family: Arial, sans-serif; background: #f9f9f9; padding: 30px;">
-      <div style="max-width: 600px; margin: auto; background: #fff; border-radius: 10px; padding: 25px; box-shadow: 0 3px 8px rgba(0,0,0,0.1);">
-        <div style="text-align: center; margin-bottom: 25px;">
-          <img src="https://livablom.fr/assets/images/logolivablom.png" alt="LIVABLŌM" style="width: 120px; margin-bottom: 10px;">
-          <h2 style="color: #333; margin: 0;">Confirmation de votre réservation</h2>
-        </div>
-
-        <p>Bonjour <strong>${name || "cher client"}</strong>,</p>
-        <p>Nous vous confirmons votre réservation chez <strong>${logementClean}</strong> 🎉</p>
-
-        <div style="background: #f3f3f3; padding: 15px; border-radius: 8px; margin: 20px 0;">
-          <p style="margin: 5px 0;"><strong>Logement :</strong> ${logementClean}</p>
-          <p style="margin: 5px 0;"><strong>Date d'arrivée :</strong> ${formatDate(startDate)} à partir de <strong>${arrivalHour}</strong></p>
-          <p style="margin: 5px 0;"><strong>Date de départ :</strong> ${formatDate(endDate)} avant <strong>${departureHour}</strong></p>
-          ${
-            personnes
-              ? `<p style="margin: 5px 0;"><strong>Nombre de personnes :</strong> ${personnes}</p>`
-              : ""
-          }
-          ${
-            phone
-              ? `<p style="margin: 5px 0;"><strong>Téléphone :</strong> ${phone}</p>`
-              : ""
-          }
-        </div>
-
-        <p>Nous avons hâte de vous accueillir et de vous offrir ${accentText}</p>
-
-        ${
-          isBlom
-            ? `<p style="margin-top:10px;">💧 Profitez de votre espace privatif avec spa, lit king size et petit déjeuner offert.</p>`
-            : `<p style="margin-top:10px;">🍃 Votre logement tout équipé est prêt à vous accueillir pour un séjour familial ou professionnel.</p>`
-        }
-
-        <p>Pour toute question ou modification :</p>
-        <ul>
-          <li>
-            Remplissez notre <a href="https://livablom.fr/contact" style="color:${colorTheme}; font-weight:bold; text-decoration:none;">formulaire de contact</a>
-          </li>
-          <li>
-            Ou appelez-nous au <a href="tel:+33649831838" style="color:${colorTheme}; font-weight:bold; text-decoration:none;">06 49 83 18 38</a>
-          </li>
-        </ul>
-
-        <p style="margin-top: 30px; font-size: 13px; color: #777;">
-          Merci de votre confiance 💛<br>
-          L’équipe LIVABLŌM
-        </p>
-      </div>
+<div style="font-family: Arial, sans-serif; background: #f9f9f9; padding: 30px;">
+  <div style="max-width: 600px; margin: auto; background: #fff; border-radius: 10px; padding: 25px; box-shadow: 0 3px 8px rgba(0,0,0,0.1);">
+    <div style="text-align: center; margin-bottom: 25px;">
+      <img src="https://livablom.fr/assets/images/logolivablom.png" alt="LIVABLŌM" style="width: 120px; margin-bottom: 10px;">
+      <h2 style="color: #333; margin: 0;">Confirmation de votre réservation</h2>
     </div>
-  `;
 
-  // --- Envoi à l’utilisateur ---
+    <p>Bonjour <strong>${name || "cher client"}</strong>,</p>
+    <p>Nous vous confirmons votre réservation chez <strong>${logementClean}</strong> 🎉</p>
+
+    <div style="background: #f3f3f3; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <p style="margin:5px 0;"><strong>Logement :</strong> ${logementClean}</p>
+      <p style="margin:5px 0;"><strong>Date d'arrivée :</strong> ${formatDate(startDate)} à partir de <strong>${arrivalHour}</strong></p>
+      <p style="margin:5px 0;"><strong>Date de départ :</strong> ${formatDate(endDate)} avant <strong>${departureHour}</strong></p>
+      ${personnes ? `<p style="margin:5px 0;"><strong>Nombre de personnes :</strong> ${personnes}</p>` : ""}
+      ${phone ? `<p style="margin:5px 0;"><strong>Téléphone :</strong> ${phone}</p>` : ""}
+    </div>
+
+    <p>Nous avons hâte de vous accueillir et de vous offrir ${accentText}</p>
+
+    ${isBlom
+      ? `<p style="margin-top:10px;">💧 Profitez de votre espace privatif avec spa, lit king size et petit déjeuner offert.</p>`
+      : `<p style="margin-top:10px;">🍃 Votre logement tout équipé est prêt à vous accueillir pour un séjour familial ou professionnel.</p>`}
+
+    <p>Pour toute question ou modification :</p>
+    <ul>
+      <li><a href="https://livablom.fr/contact" style="color:${colorTheme}; font-weight:bold; text-decoration:none;">Formulaire de contact</a></li>
+      <li><a href="tel:+33649831838" style="color:${colorTheme}; font-weight:bold; text-decoration:none;">06 49 83 18 38</a></li>
+    </ul>
+
+    <p style="margin-top: 30px; font-size: 13px; color: #777;">
+      Merci de votre confiance 💛<br>L’équipe LIVABLŌM
+    </p>
+  </div>
+</div>
+`;
+
   try {
     await tranEmailApi.sendTransacEmail({
       sender: { name: brevoSenderName, email: brevoSender },
@@ -255,7 +219,6 @@ const departureHour = "11h00";
     console.error("❌ Erreur envoi email client:", err);
   }
 
-  // --- Copie à l’administrateur ---
   if (brevoAdminTo) {
     try {
       await tranEmailApi.sendTransacEmail({
@@ -263,18 +226,14 @@ const departureHour = "11h00";
         to: [{ email: brevoAdminTo }],
         subject: `Nouvelle réservation - ${logementClean}`,
         htmlContent: `
-          <h3>Nouvelle réservation ${isBlom ? "BLŌM" : "LIVA"}</h3>
-          <p><b>Nom :</b> ${name}</p>
-          <p><b>Email :</b> ${email}</p>
-          <p><b>Téléphone :</b> ${phone}</p>
-          <p><b>Logement :</b> ${logementClean}</p>
-          <p><b>Dates :</b> ${formatDate(startDate)} → ${formatDate(endDate)}</p>
-          ${
-            personnes
-              ? `<p><b>Nombre de personnes :</b> ${personnes}</p>`
-              : ""
-          }
-        `,
+<h3>Nouvelle réservation ${isBlom ? "BLŌM" : "LIVA"}</h3>
+<p><b>Nom :</b> ${name}</p>
+<p><b>Email :</b> ${email}</p>
+<p><b>Téléphone :</b> ${phone}</p>
+<p><b>Logement :</b> ${logementClean}</p>
+<p><b>Dates :</b> ${formatDate(startDate)} → ${formatDate(endDate)}</p>
+${personnes ? `<p><b>Nombre de personnes :</b> ${personnes}</p>` : ""}
+`,
       });
       console.log("✉️ Copie admin envoyée à :", brevoAdminTo);
     } catch (err) {
@@ -292,7 +251,6 @@ const app = express();
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
-
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
     console.log(`✅ Webhook Stripe vérifié : ${event.type}`);
@@ -331,7 +289,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
   res.json({ received: true });
 });
 
-// ✅ Les middlewares JSON / CORS doivent venir après
+// ✅ Middlewares
 app.use(cors());
 app.use(bodyParser.json());
 
@@ -417,9 +375,7 @@ app.get("/api/config", (req, res) => {
 // ========================================================
 app.get("/", (req, res) =>
   res.send(
-    `🚀 API LIVABLŌM opérationnelle ! Mode: ${isTestMode ? "TEST" : "LIVE"} | Paiement: ${
-      isPaymentTest ? "1€" : "réel"
-    }`
+    `🚀 API LIVABLŌM opérationnelle ! Mode: ${isTestMode ? "TEST" : "LIVE"} | Paiement: ${isPaymentTest ? "1€" : "réel"}`
   )
 );
 
@@ -428,8 +384,6 @@ app.get("/", (req, res) =>
 // ========================================================
 app.listen(port, () => {
   console.log(
-    `✅ Serveur lancé sur port ${port} (${NODE_ENV}) | Mode: ${isTestMode ? "TEST" : "LIVE"} | Paiement: ${
-      isPaymentTest ? "1€" : "réel"
-    }`
+    `✅ Serveur lancé sur port ${port} (${NODE_ENV}) | Mode: ${isTestMode ? "TEST" : "LIVE"} | Paiement: ${isPaymentTest ? "1€" : "réel"}`
   );
 });
