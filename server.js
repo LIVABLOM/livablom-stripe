@@ -147,7 +147,7 @@ function slugify(str) {
 }
 
 // ========================================================
-// 📩 Envoi des emails (nouvelle version élégante LIVABLŌM 2025)
+// 📩 Envoi des emails (version différenciée LIVA / BLŌM)
 // ========================================================
 async function sendConfirmationEmail({
   name,
@@ -171,9 +171,21 @@ async function sendConfirmationEmail({
     });
   };
 
-  const logementClean =
-    logement === "BLOM" ? "BLŌM – Spa & Détente" : "LIVA – Confort & Sérénité";
+  // --- Choix du style et du texte selon le logement ---
+  const isBlom = logement === "BLOM";
+  const logementClean = isBlom
+    ? "BLŌM – Spa & Détente"
+    : "LIVA – Confort & Sérénité";
 
+  const colorTheme = isBlom ? "#c59c5d" : "#5da0c5";
+  const accentText = isBlom
+    ? "un moment de détente et de bien-être unique 💆‍♀️"
+    : "un séjour confortable et apaisant 🏡";
+
+  const arrivalHour = "16h00";
+  const departureHour = "11h00";
+
+  // --- Contenu HTML du mail ---
   const emailHtml = `
     <div style="font-family: Arial, sans-serif; background: #f9f9f9; padding: 30px;">
       <div style="max-width: 600px; margin: auto; background: #fff; border-radius: 10px; padding: 25px; box-shadow: 0 3px 8px rgba(0,0,0,0.1);">
@@ -183,16 +195,12 @@ async function sendConfirmationEmail({
         </div>
 
         <p>Bonjour <strong>${name || "cher client"}</strong>,</p>
-        <p>Nous vous confirmons votre réservation chez <strong>LIVABLŌM</strong> 🎉</p>
+        <p>Nous vous confirmons votre réservation chez <strong>${logementClean}</strong> 🎉</p>
 
         <div style="background: #f3f3f3; padding: 15px; border-radius: 8px; margin: 20px 0;">
           <p style="margin: 5px 0;"><strong>Logement :</strong> ${logementClean}</p>
-          <p style="margin: 5px 0;"><strong>Date d'arrivée :</strong> ${formatDate(
-            startDate
-          )} à partir de <strong>16h00</strong></p>
-          <p style="margin: 5px 0;"><strong>Date de départ :</strong> ${formatDate(
-            endDate
-          )} avant <strong>11h00</strong></p>
+          <p style="margin: 5px 0;"><strong>Date d'arrivée :</strong> ${formatDate(startDate)} à partir de <strong>${arrivalHour}</strong></p>
+          <p style="margin: 5px 0;"><strong>Date de départ :</strong> ${formatDate(endDate)} avant <strong>${departureHour}</strong></p>
           ${
             personnes
               ? `<p style="margin: 5px 0;"><strong>Nombre de personnes :</strong> ${personnes}</p>`
@@ -205,15 +213,21 @@ async function sendConfirmationEmail({
           }
         </div>
 
-        <p>Nous avons hâte de vous accueillir et de vous offrir un moment de détente inoubliable 💫</p>
+        <p>Nous avons hâte de vous accueillir et de vous offrir ${accentText}</p>
 
-        <p>Pour toute question ou modification, vous pouvez :</p>
+        ${
+          isBlom
+            ? `<p style="margin-top:10px;">💧 Profitez de votre espace privatif avec spa, lit king size et petit déjeuner offert.</p>`
+            : `<p style="margin-top:10px;">🍃 Votre logement tout équipé est prêt à vous accueillir pour un séjour familial ou professionnel.</p>`
+        }
+
+        <p>Pour toute question ou modification :</p>
         <ul>
           <li>
-            Remplir notre <a href="https://livablom.fr/contact" style="color:#c59c5d; font-weight:bold; text-decoration:none;">formulaire de contact</a>
+            Remplissez notre <a href="https://livablom.fr/contact" style="color:${colorTheme}; font-weight:bold; text-decoration:none;">formulaire de contact</a>
           </li>
           <li>
-            Ou nous appeler directement au <a href="tel:+33649831838" style="color:#c59c5d; font-weight:bold; text-decoration:none;">06 49 83 18 38</a>
+            Ou appelez-nous au <a href="tel:+33649831838" style="color:${colorTheme}; font-weight:bold; text-decoration:none;">06 49 83 18 38</a>
           </li>
         </ul>
 
@@ -225,6 +239,7 @@ async function sendConfirmationEmail({
     </div>
   `;
 
+  // --- Envoi à l’utilisateur ---
   try {
     await tranEmailApi.sendTransacEmail({
       sender: { name: brevoSenderName, email: brevoSender },
@@ -236,6 +251,35 @@ async function sendConfirmationEmail({
   } catch (err) {
     console.error("❌ Erreur envoi email client:", err);
   }
+
+  // --- Copie à l’administrateur ---
+  if (brevoAdminTo) {
+    try {
+      await tranEmailApi.sendTransacEmail({
+        sender: { name: brevoSenderName, email: brevoSender },
+        to: [{ email: brevoAdminTo }],
+        subject: `Nouvelle réservation - ${logementClean}`,
+        htmlContent: `
+          <h3>Nouvelle réservation ${isBlom ? "BLŌM" : "LIVA"}</h3>
+          <p><b>Nom :</b> ${name}</p>
+          <p><b>Email :</b> ${email}</p>
+          <p><b>Téléphone :</b> ${phone}</p>
+          <p><b>Logement :</b> ${logementClean}</p>
+          <p><b>Dates :</b> ${formatDate(startDate)} → ${formatDate(endDate)}</p>
+          ${
+            personnes
+              ? `<p><b>Nombre de personnes :</b> ${personnes}</p>`
+              : ""
+          }
+        `,
+      });
+      console.log("✉️ Copie admin envoyée à :", brevoAdminTo);
+    } catch (err) {
+      console.error("❌ Erreur email admin:", err);
+    }
+  }
+}
+
 
   // 📩 Copie à l’administrateur
   if (brevoAdminTo) {
