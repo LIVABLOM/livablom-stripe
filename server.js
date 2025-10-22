@@ -147,7 +147,7 @@ function slugify(str) {
 }
 
 // ========================================================
-// 📩 Envoi des emails (version améliorée LIVABLŌM 2025)
+// 📩 Envoi des emails (nouvelle version élégante LIVABLŌM 2025)
 // ========================================================
 async function sendConfirmationEmail({
   name,
@@ -160,55 +160,69 @@ async function sendConfirmationEmail({
 }) {
   if (!brevoApiKey) return;
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
-  const heureArrivee = normalizeLogement(logement) === "BLOM" ? "19h" : "16h";
 
   const formatDate = (dateStr) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString("fr-FR", {
       weekday: "long",
-      day: "2-digit",
+      day: "numeric",
       month: "long",
       year: "numeric",
     });
   };
 
-  const logementClean = logement === "BLOM" ? "BLŌM – Spa & Détente" : "LIVA – Confort & Sérénité";
+  const logementClean =
+    logement === "BLOM" ? "BLŌM – Spa & Détente" : "LIVA – Confort & Sérénité";
 
   const emailHtml = `
-  <div style="font-family: Helvetica, Arial, sans-serif; background: #000; color: #fff; padding: 40px 0;">
-    <table align="center" width="90%" style="max-width:600px; background:#111; border-radius:12px; padding:20px;">
-      <tr>
-        <td style="text-align:center;">
-          <img src="https://livablom.fr/assets/logo_lotus.jpg" alt="LIVABLŌM" width="80" height="80" style="margin-bottom:10px;">
-          <h2 style="color:#fff; margin:0;">Confirmation de réservation</h2>
-          <p style="color:#aaa; margin:0;">Merci pour votre confiance, ${name || "cher client"} 🌸</p>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:20px;">
-          <h3 style="color:#fff;">Votre séjour à <span style="color:#ffb6c1;">${logementClean}</span></h3>
-          <p><b>📅 Arrivée :</b> ${formatDate(startDate)} à partir de ${heureArrivee}</p>
-          <p><b>📅 Départ :</b> ${formatDate(endDate)} avant 11h</p>
+    <div style="font-family: Arial, sans-serif; background: #f9f9f9; padding: 30px;">
+      <div style="max-width: 600px; margin: auto; background: #fff; border-radius: 10px; padding: 25px; box-shadow: 0 3px 8px rgba(0,0,0,0.1);">
+        <div style="text-align: center; margin-bottom: 25px;">
+          <img src="https://livablom.fr/assets/images/logolivablom.png" alt="LIVABLŌM" style="width: 120px; margin-bottom: 10px;">
+          <h2 style="color: #333; margin: 0;">Confirmation de votre réservation</h2>
+        </div>
+
+        <p>Bonjour <strong>${name || "cher client"}</strong>,</p>
+        <p>Nous vous confirmons votre réservation chez <strong>LIVABLŌM</strong> 🎉</p>
+
+        <div style="background: #f3f3f3; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <p style="margin: 5px 0;"><strong>Logement :</strong> ${logementClean}</p>
+          <p style="margin: 5px 0;"><strong>Date d'arrivée :</strong> ${formatDate(
+            startDate
+          )} à partir de <strong>16h00</strong></p>
+          <p style="margin: 5px 0;"><strong>Date de départ :</strong> ${formatDate(
+            endDate
+          )} avant <strong>11h00</strong></p>
           ${
             personnes
-              ? `<p><b>👥 Nombre de personnes :</b> ${personnes}</p>`
+              ? `<p style="margin: 5px 0;"><strong>Nombre de personnes :</strong> ${personnes}</p>`
               : ""
           }
           ${
             phone
-              ? `<p><b>📞 Téléphone :</b> ${phone}</p>`
+              ? `<p style="margin: 5px 0;"><strong>Téléphone :</strong> ${phone}</p>`
               : ""
           }
-          <p style="margin-top:20px;">Pour toute question, <a href="https://livablom.fr/contact" style="color:#ffb6c1;">contactez-nous ici</a>.</p>
-        </td>
-      </tr>
-      <tr>
-        <td style="text-align:center; padding:20px; border-top:1px solid #333;">
-          <p style="color:#888; font-size:12px;">LIVABLŌM – Hébergements & Bien-être<br>338 Boulevard Ambroise Croizat, 59287 Guesnain</p>
-        </td>
-      </tr>
-    </table>
-  </div>
+        </div>
+
+        <p>Nous avons hâte de vous accueillir et de vous offrir un moment de détente inoubliable 💫</p>
+
+        <p>Pour toute question ou modification, vous pouvez :</p>
+        <ul>
+          <li>
+            Remplir notre <a href="https://livablom.fr/contact" style="color:#c59c5d; font-weight:bold; text-decoration:none;">formulaire de contact</a>
+          </li>
+          <li>
+            Ou nous appeler directement au <a href="tel:+33649831838" style="color:#c59c5d; font-weight:bold; text-decoration:none;">06 49 83 18 38</a>
+          </li>
+        </ul>
+
+        <p style="margin-top: 30px; font-size: 13px; color: #777;">
+          Merci de votre confiance 💛<br>
+          L’équipe LIVABLŌM
+        </p>
+      </div>
+    </div>
   `;
 
   try {
@@ -223,22 +237,28 @@ async function sendConfirmationEmail({
     console.error("❌ Erreur envoi email client:", err);
   }
 
-  // Envoi admin (inchangé)
+  // 📩 Copie à l’administrateur
   if (brevoAdminTo) {
     try {
       await tranEmailApi.sendTransacEmail({
         sender: { name: brevoSenderName, email: brevoSender },
         to: [{ email: brevoAdminTo }],
-        subject: `Nouvelle réservation - ${logement}`,
+        subject: `Nouvelle réservation - ${logementClean}`,
         htmlContent: `
           <h3>Nouvelle réservation</h3>
           <p><b>Nom :</b> ${name}</p>
           <p><b>Email :</b> ${email}</p>
           <p><b>Téléphone :</b> ${phone}</p>
-          <p><b>Dates :</b> ${startDate} → ${endDate}</p>
+          <p><b>Logement :</b> ${logementClean}</p>
+          <p><b>Dates :</b> ${formatDate(startDate)} → ${formatDate(endDate)}</p>
+          ${
+            personnes
+              ? `<p><b>Nombre de personnes :</b> ${personnes}</p>`
+              : ""
+          }
         `,
       });
-      console.log("✉️ Email admin envoyé à :", brevoAdminTo);
+      console.log("✉️ Copie admin envoyée à :", brevoAdminTo);
     } catch (err) {
       console.error("❌ Erreur email admin:", err);
     }
