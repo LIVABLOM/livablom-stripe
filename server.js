@@ -255,33 +255,46 @@ const departureHour = "11h00";
     console.error("❌ Erreur envoi email client:", err);
   }
 
-  // --- Copie à l’administrateur ---
-  if (brevoAdminTo) {
-    try {
-      await tranEmailApi.sendTransacEmail({
-        sender: { name: brevoSenderName, email: brevoSender },
-        to: [{ email: brevoAdminTo }],
-        subject: `Nouvelle réservation - ${logementClean}`,
-        htmlContent: `
-          <h3>Nouvelle réservation ${isBlom ? "BLŌM" : "LIVA"}</h3>
-          <p><b>Nom :</b> ${name}</p>
-          <p><b>Email :</b> ${email}</p>
-          <p><b>Téléphone :</b> ${phone}</p>
-          <p><b>Logement :</b> ${logementClean}</p>
-          <p><b>Dates :</b> ${formatDate(startDate)} → ${formatDate(endDate)}</p>
-          ${
-            personnes
-              ? `<p><b>Nombre de personnes :</b> ${personnes}</p>`
-              : ""
-          }
-        `,
-      });
-      console.log("✉️ Copie admin envoyée à :", brevoAdminTo);
-    } catch (err) {
-      console.error("❌ Erreur email admin:", err);
-    }
+// --- Copie à l’administrateur (améliorée) ---
+if (brevoAdminTo) {
+  try {
+    await tranEmailApi.sendTransacEmail({
+      sender: { name: brevoSenderName, email: brevoSender },
+      to: [{ email: brevoAdminTo }],
+      subject: `🧾 Nouvelle réservation - ${logementClean}`,
+      htmlContent: `
+        <div style="font-family: Arial, sans-serif; background:#fafafa; padding:20px;">
+          <h2 style="color:${colorTheme}; margin-bottom:10px;">
+            Nouvelle réservation sur ${logementClean}
+          </h2>
+
+          <p><strong>Nom :</strong> ${name || "Non précisé"}</p>
+          <p><strong>Email :</strong> ${email || "Non précisé"}</p>
+          <p><strong>Téléphone :</strong> ${phone || "Non précisé"}</p>
+
+          <p><strong>Dates :</strong><br>
+            du <b>${formatDate(startDate)}</b> à 16h00<br>
+            au <b>${formatDate(endDate)}</b> (départ max 11h00)
+          </p>
+
+          <p><strong>Nombre de personnes :</strong> ${personnes || "Non précisé"}</p>
+
+          <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;">
+
+          <p style="font-size:14px; color:#555;">
+            Réservation effectuée via <a href="https://livablom.fr" style="color:${colorTheme}; text-decoration:none;">livablom.fr</a><br>
+            Logement : <b>${logementClean}</b><br>
+            Mode de paiement : ${isPaymentTest ? "TEST (1 €)" : "RÉEL"}
+          </p>
+        </div>
+      `,
+    });
+    console.log("✉️ Copie admin envoyée à :", brevoAdminTo);
+  } catch (err) {
+    console.error("❌ Erreur email admin:", err);
   }
 }
+
 
 // ========================================================
 // 🚦 Serveur Express
