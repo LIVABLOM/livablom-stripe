@@ -271,6 +271,24 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         );
         console.log("✅ Réservation enregistrée :", session.metadata.logement);
       }
+      // 🔁 Envoi de la réservation au calendar-proxy
+try {
+  const proxyUrl = process.env.CALENDAR_PROXY_URL || "https://calendar-proxy.up.railway.app/api/add-reservation";
+  await fetch(proxyUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      logement: session.metadata.logement,
+      date_debut: session.metadata.date_debut,
+      date_fin: session.metadata.date_fin,
+      title: `Réservation ${session.metadata.logement}`,
+    }),
+  });
+  console.log("📤 Réservation envoyée à calendar-proxy");
+} catch (err) {
+  console.error("❌ Erreur envoi vers calendar-proxy :", err);
+}
+
 
       await sendConfirmationEmail({
         name: session.metadata?.name,
