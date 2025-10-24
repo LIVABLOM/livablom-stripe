@@ -14,6 +14,9 @@ const ical = require("ical");
 const fetch = require("node-fetch");
 const SibApiV3Sdk = require("sib-api-v3-sdk");
 
+console.log("🌐 CALENDAR_PROXY_URL =", process.env.CALENDAR_PROXY_URL);
+
+
 // ========================================================
 // ⚙️ CONFIGURATION GLOBALE
 // ========================================================
