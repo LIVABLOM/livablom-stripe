@@ -168,8 +168,10 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
   const accentText = isBlom
     ? "un moment de détente et de bien-être unique 💆‍♀️"
     : "un séjour confortable et apaisant 🏡";
-  const arrivalHour = "16h00";
-  const departureHour = "11h00";
+
+  // ✅ Heure d'arrivée selon le logement
+  const arrivalHour = isBlom ? "19h00" : "16h00";
+  const departureHour = "11h00"; // départ commun
 
   // --- HTML mail client ---
   const emailHtml = `
@@ -222,6 +224,7 @@ async function sendConfirmationEmail({ name, email, logement, startDate, endDate
     console.error("❌ Erreur envoi email client:", err);
   }
 
+  // --- Copie admin ---
   if (brevoAdminTo) {
     try {
       await tranEmailApi.sendTransacEmail({
@@ -244,6 +247,7 @@ ${personnes ? `<p><b>Nombre de personnes :</b> ${personnes}</p>` : ""}
     }
   }
 }
+
 
 // ========================================================
 // 🚦 Serveur Express
@@ -340,8 +344,9 @@ app.post("/api/checkout", async (req, res) => {
       ],
       mode: "payment",
       customer_email: email,
-      success_url: `${frontendUrl}/merci/`,
-      cancel_url: `${frontendUrl}/contact/`,
+      success_url: `${frontendUrl}/${slugify(logement)}?payment=success`,
+      cancel_url: `${frontendUrl}/${slugify(logement)}?payment=cancel`,
+      
       metadata: { logement, date_debut: startDate, date_fin: endDate, personnes, name, email, phone },
     });
 
