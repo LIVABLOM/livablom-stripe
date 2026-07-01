@@ -144,6 +144,18 @@ function slugify(str) {
   );
 }
 
+function todayParisISO() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Paris",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function isSameDayBlomBooking(logement, startDate) {
+  return normalizeLogement(logement) === "BLOM" && startDate === todayParisISO();
+}
 // ========================================================
 // 📩 Envoi des emails (version différenciée LIVA / BLŌM)
 // ========================================================
@@ -324,8 +336,19 @@ app.use(bodyParser.json());
 app.post("/api/checkout", async (req, res) => {
   try {
     const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
-    if (!logement || !startDate || !endDate || !amount || !email)
+
+    if (!logement || !startDate || !endDate || !amount || !email) {
       return res.status(400).json({ error: "Champs manquants" });
+    }
+
+    // 🚫 Sécurité : pas de réservation automatique le jour même pour BLŌM
+    if (isSameDayBlomBooking(logement, startDate)) {
+      return res.status(409).json({
+        error: "same_day_not_allowed",
+        message:
+          "Pour une arrivée aujourd’hui à BLŌM, merci de nous contacter directement afin de vérifier si la réservation est possible.",
+      });
+    }
 
     const montantFinal = isPaymentTest ? 1 : amount;
 
