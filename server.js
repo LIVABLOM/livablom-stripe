@@ -89,6 +89,18 @@ const GIFT_CARD_PAYMENT_LINKS = {
   plink_1Sms8ZIWRH02GJbe7pTb0fGd: 15000,
 };
 
+const giftCardAdminToken = process.env.GIFT_CARD_ADMIN_TOKEN;
+
+function requireGiftCardAdmin(req, res, next) {
+  const token = req.headers["x-gift-card-admin-token"];
+
+  if (!giftCardAdminToken || token !== giftCardAdminToken) {
+    return res.status(401).json({ error: "Non autorisé" });
+  }
+
+  next();
+}
+
 function isGiftCardPayment(session) {
   return Boolean(
     session.payment_link &&
@@ -214,6 +226,21 @@ function todayParisISO() {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
+}
+
+function toISODate(value) {
+  if (!value) return "";
+
+  if (typeof value === "string") {
+    return value.slice(0, 10);
+  }
+
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Paris",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value));
 }
 
 function isSameDayBlomBooking(logement, startDate) {
@@ -575,7 +602,7 @@ if (giftCard.email_sent) {
   personalMessage,
   amountCents,
   code: giftCard.code,
-  expiresAt: String(giftCard.expires_at).slice(0, 10),
+  expiresAt: toISODate(giftCard.expires_at),
 });
 
 await pool.query(
@@ -677,6 +704,113 @@ try {
 // ✅ Middlewares
 app.use(cors());
 app.use(bodyParser.json());
+
+// ========================================================
+// 🎁 API ADMIN - CARTES CADEAUX
+// ========================================================
+
+// Vérifier une carte cadeau
+app.get(
+  "/api/gift-cards/:code",
+  requireGiftCardAdmin,
+  async (req, res) => {
+    try {
+      const code = String(req.params.code || "").trim().toUpperCase();
+
+      const result = await pool.query(
+        `
+          SELECT
+            code,
+            amount_cents,
+            buyer_name,
+            buyer_email,
+            recipient_name,
+            sender_name,
+            personal_message,
+            purchased_at,
+            expires_at,
+            used,
+            used_at,
+            reservation_reference
+          FROM gift_cards
+          WHERE code = $1
+        `,
+        [code]
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({
+          error: "Carte cadeau introuvable",
+        });
+      }
+
+      const card = result.rows[0];
+
+      const today = todayParisISO();
+      const expiresAt = toISODate(card.expires_at);
+
+      res.json({
+        ...card,
+        amount_euros: card.amount_cents / 100,
+        expired: expiresAt < today,
+        valid: !card.used && expiresAt >= today,
+      });
+    } catch (err) {
+      console.error("❌ Erreur vérification carte cadeau :", err);
+      res.status(500).json({
+        error: "Impossible de vérifier la carte cadeau",
+      });
+    }
+  }
+);
+
+// Marquer une carte cadeau comme utilisée
+app.post(
+  "/api/gift-cards/:code/use",
+  requireGiftCardAdmin,
+  async (req, res) => {
+    try {
+      const code = String(req.params.code || "").trim().toUpperCase();
+      const reservationReference =
+        req.body?.reservation_reference || null;
+
+      const result = await pool.query(
+        `
+          UPDATE gift_cards
+          SET
+            used = TRUE,
+            used_at = NOW(),
+            reservation_reference = $2
+          WHERE code = $1
+            AND used = FALSE
+            AND expires_at >= CURRENT_DATE
+          RETURNING *
+        `,
+        [code, reservationReference]
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(409).json({
+          error:
+            "Carte inexistante, expirée ou déjà utilisée",
+        });
+      }
+
+      res.json({
+        success: true,
+        code: result.rows[0].code,
+        amount_euros: result.rows[0].amount_cents / 100,
+        used: true,
+        used_at: result.rows[0].used_at,
+      });
+    } catch (err) {
+      console.error("❌ Erreur utilisation carte cadeau :", err);
+      res.status(500).json({
+        error: "Impossible d'utiliser la carte cadeau",
+      });
+    }
+  }
+);
 
 // ========================================================
 // 💳 API Checkout Stripe
