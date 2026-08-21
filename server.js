@@ -13,6 +13,7 @@ const stripeLib = require("stripe");
 const ical = require("ical");
 const fetch = require("node-fetch");
 const SibApiV3Sdk = require("sib-api-v3-sdk");
+const crypto = require("crypto");
 
 console.log("🌐 CALENDAR_PROXY_URL =", process.env.CALENDAR_PROXY_URL);
 
@@ -78,6 +79,68 @@ pool
   .connect()
   .then(() => console.log("✅ Connecté à PostgreSQL"))
   .catch((err) => console.error("❌ Erreur connexion BDD:", err));
+// ========================================================
+// 🎁 CARTES CADEAUX BLŌM
+// ========================================================
+
+const GIFT_CARD_PAYMENT_LINKS = {
+  plink_1Sms3CIWRH02GJbeWO0NlSFE: 5000,
+  plink_1Sms7BIWRH02GJbe39aDJE5e: 10000,
+  plink_1Sms8ZIWRH02GJbe7pTb0fGd: 15000,
+};
+
+function isGiftCardPayment(session) {
+  return Boolean(
+    session.payment_link &&
+    GIFT_CARD_PAYMENT_LINKS[session.payment_link]
+  );
+}
+
+function generateGiftCardCode() {
+  return `BLOM-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+}
+
+function giftCardExpiryDate() {
+  const expiration = new Date();
+  expiration.setFullYear(expiration.getFullYear() + 1);
+  return expiration.toISOString().slice(0, 10);
+}
+
+async function initGiftCardsTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gift_cards (
+      id SERIAL PRIMARY KEY,
+      code VARCHAR(30) UNIQUE NOT NULL,
+      stripe_session_id VARCHAR(255) UNIQUE NOT NULL,
+      payment_link_id VARCHAR(255) NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      currency VARCHAR(10) NOT NULL DEFAULT 'eur',
+
+      buyer_name TEXT,
+      buyer_email TEXT NOT NULL,
+
+      recipient_name TEXT NOT NULL,
+      sender_name TEXT NOT NULL,
+      personal_message TEXT,
+
+      purchased_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at DATE NOT NULL,
+
+      email_sent BOOLEAN NOT NULL DEFAULT FALSE,
+email_sent_at TIMESTAMPTZ,
+
+      used BOOLEAN NOT NULL DEFAULT FALSE,
+      used_at TIMESTAMPTZ,
+      reservation_reference TEXT
+    )
+  `);
+
+  console.log("🎁 Table gift_cards prête");
+}
+
+initGiftCardsTable().catch((err) =>
+  console.error("❌ Erreur initialisation gift_cards :", err)
+);
 
 // ========================================================
 // 📅 iCal Google
@@ -260,6 +323,275 @@ ${personnes ? `<p><b>Nombre de personnes :</b> ${personnes}</p>` : ""}
   }
 }
 
+// ========================================================
+// 🎁 Traitement des cartes cadeaux
+// ========================================================
+
+function getStripeCustomField(session, key) {
+  const field = (session.custom_fields || []).find((f) => f.key === key);
+
+  if (!field) return "";
+
+  if (field.type === "text") return field.text?.value || "";
+  if (field.type === "numeric") return String(field.numeric?.value || "");
+  if (field.type === "dropdown") return field.dropdown?.value || "";
+
+  return "";
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+async function sendGiftCardEmail({
+  buyerName,
+  buyerEmail,
+  recipientName,
+  senderName,
+  personalMessage,
+  amountCents,
+  code,
+  expiresAt,
+}) {
+  if (!brevoApiKey) {
+    console.warn("⚠️ Brevo désactivé : carte cadeau non envoyée.");
+    return;
+  }
+
+  const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
+
+  const amount = (amountCents / 100).toFixed(0);
+
+  const expirationFormatted = new Date(
+    `${expiresAt}T12:00:00`
+  ).toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+
+  const messageHtml = personalMessage
+    ? `
+      <div style="margin:25px 0;padding:18px;background:#faf7f2;border-radius:8px;">
+        <em>« ${escapeHtml(personalMessage)} »</em>
+      </div>
+    `
+    : "";
+
+  const htmlContent = `
+    <div style="font-family:Arial,sans-serif;background:#f5f3ef;padding:30px;">
+      <div style="max-width:600px;margin:auto;background:#ffffff;padding:35px;border-radius:12px;text-align:center;">
+
+        <img
+          src="https://livablom.fr/assets/images/logolivablom.png"
+          alt="BLŌM"
+          style="width:130px;margin-bottom:20px;"
+        >
+
+        <p style="font-size:14px;letter-spacing:3px;color:#777;">
+          CARTE CADEAU
+        </p>
+
+        <h1 style="font-size:42px;margin:15px 0;color:#c59c5d;">
+          ${amount} €
+        </h1>
+
+        <p style="font-size:18px;">
+          Une parenthèse de détente à vivre chez <strong>BLŌM</strong>
+        </p>
+
+        <div style="margin:30px 0;font-size:17px;line-height:1.8;">
+          <div><strong>Pour :</strong> ${escapeHtml(recipientName)}</div>
+          <div><strong>De la part de :</strong> ${escapeHtml(senderName)}</div>
+        </div>
+
+        ${messageHtml}
+
+        <div style="margin:30px 0;padding:20px;border:1px solid #c59c5d;border-radius:8px;">
+          <div style="font-size:13px;color:#777;">CODE CADEAU</div>
+          <div style="font-size:25px;font-weight:bold;letter-spacing:2px;margin-top:8px;">
+            ${escapeHtml(code)}
+          </div>
+        </div>
+
+        <p>
+          Valable jusqu'au <strong>${expirationFormatted}</strong>
+        </p>
+
+        <p style="font-size:14px;color:#666;line-height:1.6;">
+          Pour réserver votre séjour, contactez BLŌM en indiquant votre code cadeau.
+          Si le montant de la réservation est supérieur à la valeur de la carte,
+          seule la différence restera à régler.
+        </p>
+
+        <p style="margin-top:30px;">
+          <a href="https://livablom.fr/contact"
+             style="color:#c59c5d;font-weight:bold;">
+            Contacter BLŌM
+          </a>
+        </p>
+
+        <p style="font-size:12px;color:#999;margin-top:30px;">
+          Carte cadeau valable 12 mois à compter de son achat.
+          Non échangeable contre de l'argent.
+        </p>
+      </div>
+    </div>
+  `;
+
+  await tranEmailApi.sendTransacEmail({
+    sender: { name: brevoSenderName, email: brevoSender },
+    to: [{ email: buyerEmail, name: buyerName || senderName }],
+    subject: `🎁 Votre carte cadeau BLŌM de ${amount} €`,
+    htmlContent,
+  });
+
+  console.log("🎁 Carte cadeau envoyée à :", buyerEmail);
+
+  if (brevoAdminTo) {
+    await tranEmailApi.sendTransacEmail({
+      sender: { name: brevoSenderName, email: brevoSender },
+      to: [{ email: brevoAdminTo }],
+      subject: `Nouvelle carte cadeau BLŌM - ${amount} €`,
+      htmlContent: `
+        <h3>Nouvelle carte cadeau BLŌM</h3>
+        <p><strong>Montant :</strong> ${amount} €</p>
+        <p><strong>Acheteur :</strong> ${escapeHtml(buyerName)}</p>
+        <p><strong>Email :</strong> ${escapeHtml(buyerEmail)}</p>
+        <p><strong>Pour :</strong> ${escapeHtml(recipientName)}</p>
+        <p><strong>De la part de :</strong> ${escapeHtml(senderName)}</p>
+        <p><strong>Code :</strong> ${escapeHtml(code)}</p>
+        <p><strong>Expiration :</strong> ${expirationFormatted}</p>
+      `,
+    });
+  }
+}
+
+async function processGiftCard(session) {
+  const amountCents = GIFT_CARD_PAYMENT_LINKS[session.payment_link];
+
+  if (!amountCents) {
+    throw new Error("Lien carte cadeau inconnu");
+  }
+
+  if (session.payment_status !== "paid") {
+    throw new Error("Carte cadeau non payée");
+  }
+
+  if (session.amount_total !== amountCents) {
+    throw new Error(
+      `Montant carte cadeau incorrect : ${session.amount_total}`
+    );
+  }
+
+  const buyerEmail =
+    session.customer_details?.email ||
+    session.customer_email;
+
+  const buyerName =
+    session.customer_details?.name ||
+    session.customer_details?.individual_name ||
+    "";
+
+  const recipientName = getStripeCustomField(
+    session,
+    "prnomdubnficiaire"
+  );
+
+  const senderName = getStripeCustomField(
+    session,
+    "delapartde"
+  );
+
+  const personalMessage = getStripeCustomField(
+    session,
+    "messageinscriresurlacartecadeau"
+  );
+
+  if (!buyerEmail || !recipientName || !senderName) {
+    throw new Error("Informations carte cadeau incomplètes");
+  }
+
+  const code = generateGiftCardCode();
+  const expiresAt = giftCardExpiryDate();
+
+  const result = await pool.query(
+    `
+      INSERT INTO gift_cards (
+        code,
+        stripe_session_id,
+        payment_link_id,
+        amount_cents,
+        currency,
+        buyer_name,
+        buyer_email,
+        recipient_name,
+        sender_name,
+        personal_message,
+        expires_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      ON CONFLICT (stripe_session_id) DO UPDATE
+SET stripe_session_id = EXCLUDED.stripe_session_id
+RETURNING *
+    `,
+    [
+      code,
+      session.id,
+      session.payment_link,
+      amountCents,
+      session.currency || "eur",
+      buyerName,
+      buyerEmail,
+      recipientName,
+      senderName,
+      personalMessage,
+      expiresAt,
+    ]
+  );
+
+  // Stripe peut renvoyer le même webhook plusieurs fois.
+  // Si la session existe déjà, on ne recrée pas une deuxième carte.
+  const giftCard = result.rows[0];
+
+if (giftCard.email_sent) {
+  console.log(
+    "ℹ️ Carte cadeau déjà créée et envoyée :",
+    session.id
+  );
+  return;
+}
+
+  await sendGiftCardEmail({
+  buyerName,
+  buyerEmail,
+  recipientName,
+  senderName,
+  personalMessage,
+  amountCents,
+  code: giftCard.code,
+  expiresAt: String(giftCard.expires_at).slice(0, 10),
+});
+
+await pool.query(
+  `
+    UPDATE gift_cards
+    SET email_sent = TRUE,
+        email_sent_at = NOW()
+    WHERE id = $1
+  `,
+  [giftCard.id]
+);
+
+  console.log(
+    `✅ Carte cadeau créée : ${code} - ${amountCents / 100} €`
+  );
+}
 
 // ========================================================
 // 🚦 Serveur Express
@@ -283,6 +615,22 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     console.log("💰 Paiement confirmé par Stripe :", session.id);
 
     try {
+
+      // 🎁 Carte cadeau : traitement séparé des réservations
+     if (isGiftCardPayment(session)) {
+  console.log("🎁 Paiement carte cadeau détecté :", session.payment_link);
+
+  try {
+    await processGiftCard(session);
+    return res.json({ received: true });
+  } catch (err) {
+    console.error("❌ Erreur traitement carte cadeau :", err);
+    return res.status(500).json({
+      error: "gift_card_processing_failed",
+    });
+  }
+}
+
       if (session.metadata?.logement && session.metadata?.date_debut && session.metadata?.date_fin) {
         await pool.query(
           "INSERT INTO reservations (logement, date_debut, date_fin) VALUES ($1, $2, $3)",
