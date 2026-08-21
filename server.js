@@ -119,13 +119,16 @@ function giftCardExpiryDate() {
 }
 
 async function initGiftCardsTable() {
+  // Table principale des cartes cadeaux
   await pool.query(`
     CREATE TABLE IF NOT EXISTS gift_cards (
       id SERIAL PRIMARY KEY,
       code VARCHAR(30) UNIQUE NOT NULL,
       stripe_session_id VARCHAR(255) UNIQUE NOT NULL,
       payment_link_id VARCHAR(255) NOT NULL,
+
       amount_cents INTEGER NOT NULL,
+      balance_cents INTEGER NOT NULL,
       currency VARCHAR(10) NOT NULL DEFAULT 'eur',
 
       buyer_name TEXT,
@@ -139,15 +142,42 @@ async function initGiftCardsTable() {
       expires_at DATE NOT NULL,
 
       email_sent BOOLEAN NOT NULL DEFAULT FALSE,
-email_sent_at TIMESTAMPTZ,
+      email_sent_at TIMESTAMPTZ,
 
       used BOOLEAN NOT NULL DEFAULT FALSE,
-      used_at TIMESTAMPTZ,
-      reservation_reference TEXT
+      used_at TIMESTAMPTZ
     )
   `);
 
-  console.log("🎁 Table gift_cards prête");
+    // Mise à niveau si la table gift_cards existait déjà
+  await pool.query(`
+    ALTER TABLE gift_cards
+    ADD COLUMN IF NOT EXISTS balance_cents INTEGER
+  `);
+
+  await pool.query(`
+    UPDATE gift_cards
+    SET balance_cents = amount_cents
+    WHERE balance_cents IS NULL
+  `);
+
+  await pool.query(`
+    ALTER TABLE gift_cards
+    ALTER COLUMN balance_cents SET NOT NULL
+  `);
+
+  // Historique des utilisations d'une carte cadeau
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gift_card_redemptions (
+      id SERIAL PRIMARY KEY,
+      gift_card_id INTEGER NOT NULL REFERENCES gift_cards(id) ON DELETE CASCADE,
+      amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+      reservation_reference TEXT,
+      redeemed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  console.log("🎁 Tables cartes cadeaux prêtes");
 }
 
 initGiftCardsTable().catch((err) =>
@@ -550,36 +580,38 @@ async function processGiftCard(session) {
   const result = await pool.query(
     `
       INSERT INTO gift_cards (
-        code,
-        stripe_session_id,
-        payment_link_id,
-        amount_cents,
-        currency,
-        buyer_name,
-        buyer_email,
-        recipient_name,
-        sender_name,
-        personal_message,
-        expires_at
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+  code,
+  stripe_session_id,
+  payment_link_id,
+  amount_cents,
+  balance_cents,
+  currency,
+  buyer_name,
+  buyer_email,
+  recipient_name,
+  sender_name,
+  personal_message,
+  expires_at
+)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       ON CONFLICT (stripe_session_id) DO UPDATE
 SET stripe_session_id = EXCLUDED.stripe_session_id
 RETURNING *
     `,
     [
-      code,
-      session.id,
-      session.payment_link,
-      amountCents,
-      session.currency || "eur",
-      buyerName,
-      buyerEmail,
-      recipientName,
-      senderName,
-      personalMessage,
-      expiresAt,
-    ]
+  code,
+  session.id,
+  session.payment_link,
+  amountCents,
+  amountCents,
+  session.currency || "eur",
+  buyerName,
+  buyerEmail,
+  recipientName,
+  senderName,
+  personalMessage,
+  expiresAt,
+]
   );
 
   // Stripe peut renvoyer le même webhook plusieurs fois.
@@ -710,6 +742,11 @@ app.use(bodyParser.json());
 // ========================================================
 
 // Vérifier une carte cadeau
+// ========================================================
+// 🎁 API ADMIN - CARTES CADEAUX
+// ========================================================
+
+// Vérifier une carte cadeau
 app.get(
   "/api/gift-cards/:code",
   requireGiftCardAdmin,
@@ -720,8 +757,10 @@ app.get(
       const result = await pool.query(
         `
           SELECT
+            id,
             code,
             amount_cents,
+            balance_cents,
             buyer_name,
             buyer_email,
             recipient_name,
@@ -730,8 +769,7 @@ app.get(
             purchased_at,
             expires_at,
             used,
-            used_at,
-            reservation_reference
+            used_at
           FROM gift_cards
           WHERE code = $1
         `,
@@ -745,18 +783,53 @@ app.get(
       }
 
       const card = result.rows[0];
-
       const today = todayParisISO();
       const expiresAt = toISODate(card.expires_at);
 
+      const redemptions = await pool.query(
+        `
+          SELECT
+            amount_cents,
+            reservation_reference,
+            redeemed_at
+          FROM gift_card_redemptions
+          WHERE gift_card_id = $1
+          ORDER BY redeemed_at ASC
+        `,
+        [card.id]
+      );
+
       res.json({
-        ...card,
+        code: card.code,
+
         amount_euros: card.amount_cents / 100,
+        balance_euros: card.balance_cents / 100,
+
+        buyer_name: card.buyer_name,
+        buyer_email: card.buyer_email,
+        recipient_name: card.recipient_name,
+        sender_name: card.sender_name,
+        personal_message: card.personal_message,
+
+        purchased_at: card.purchased_at,
+        expires_at: expiresAt,
+
         expired: expiresAt < today,
-        valid: !card.used && expiresAt >= today,
+        used: card.used,
+        valid:
+          !card.used &&
+          card.balance_cents > 0 &&
+          expiresAt >= today,
+
+        redemptions: redemptions.rows.map((r) => ({
+          amount_euros: r.amount_cents / 100,
+          reservation_reference: r.reservation_reference,
+          redeemed_at: r.redeemed_at,
+        })),
       });
     } catch (err) {
       console.error("❌ Erreur vérification carte cadeau :", err);
+
       res.status(500).json({
         error: "Impossible de vérifier la carte cadeau",
       });
@@ -764,50 +837,146 @@ app.get(
   }
 );
 
-// Marquer une carte cadeau comme utilisée
+
+// Utiliser tout ou partie du solde
 app.post(
   "/api/gift-cards/:code/use",
   requireGiftCardAdmin,
   async (req, res) => {
+    const client = await pool.connect();
+
     try {
       const code = String(req.params.code || "").trim().toUpperCase();
+
+      const amountEuros = Number(req.body?.amount_euros);
       const reservationReference =
         req.body?.reservation_reference || null;
 
-      const result = await pool.query(
-        `
-          UPDATE gift_cards
-          SET
-            used = TRUE,
-            used_at = NOW(),
-            reservation_reference = $2
-          WHERE code = $1
-            AND used = FALSE
-            AND expires_at >= CURRENT_DATE
-          RETURNING *
-        `,
-        [code, reservationReference]
-      );
-
-      if (result.rowCount === 0) {
-        return res.status(409).json({
-          error:
-            "Carte inexistante, expirée ou déjà utilisée",
+      if (!Number.isFinite(amountEuros) || amountEuros <= 0) {
+        return res.status(400).json({
+          error: "Montant invalide",
         });
       }
 
+      const amountCents = Math.round(amountEuros * 100);
+
+      await client.query("BEGIN");
+
+      // Verrouille la carte pendant l'utilisation
+      const result = await client.query(
+        `
+          SELECT
+            id,
+            code,
+            balance_cents,
+            expires_at,
+            used
+          FROM gift_cards
+          WHERE code = $1
+          FOR UPDATE
+        `,
+        [code]
+      );
+
+      if (result.rowCount === 0) {
+        await client.query("ROLLBACK");
+
+        return res.status(404).json({
+          error: "Carte cadeau introuvable",
+        });
+      }
+
+      const card = result.rows[0];
+      const expiresAt = toISODate(card.expires_at);
+      const today = todayParisISO();
+
+      if (expiresAt < today) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          error: "Carte cadeau expirée",
+        });
+      }
+
+      if (card.used || card.balance_cents <= 0) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          error: "Carte cadeau entièrement utilisée",
+        });
+      }
+
+      if (amountCents > card.balance_cents) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          error: "Solde insuffisant",
+          balance_euros: card.balance_cents / 100,
+        });
+      }
+
+      const newBalance = card.balance_cents - amountCents;
+      const fullyUsed = newBalance === 0;
+
+      // Historique de l'utilisation
+      await client.query(
+        `
+          INSERT INTO gift_card_redemptions (
+            gift_card_id,
+            amount_cents,
+            reservation_reference
+          )
+          VALUES ($1, $2, $3)
+        `,
+        [
+          card.id,
+          amountCents,
+          reservationReference,
+        ]
+      );
+
+      // Nouveau solde
+      await client.query(
+        `
+          UPDATE gift_cards
+          SET
+            balance_cents = $2,
+            used = $3,
+            used_at = CASE
+              WHEN $3 = TRUE THEN NOW()
+              ELSE NULL
+            END
+          WHERE id = $1
+        `,
+        [
+          card.id,
+          newBalance,
+          fullyUsed,
+        ]
+      );
+
+      await client.query("COMMIT");
+
       res.json({
         success: true,
-        code: result.rows[0].code,
-        amount_euros: result.rows[0].amount_cents / 100,
-        used: true,
-        used_at: result.rows[0].used_at,
+        code: card.code,
+        amount_used_euros: amountCents / 100,
+        balance_euros: newBalance / 100,
+        fully_used: fullyUsed,
       });
     } catch (err) {
-      console.error("❌ Erreur utilisation carte cadeau :", err);
+      await client.query("ROLLBACK");
+
+      console.error(
+        "❌ Erreur utilisation carte cadeau :",
+        err
+      );
+
       res.status(500).json({
         error: "Impossible d'utiliser la carte cadeau",
       });
+    } finally {
+      client.release();
     }
   }
 );
