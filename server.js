@@ -113,10 +113,28 @@ function generateGiftCardCode() {
 }
 
 function giftCardExpiryDate() {
-  const expiration = new Date();
-  expiration.setFullYear(expiration.getFullYear() + 1);
-  return expiration.toISOString().slice(0, 10);
+  const today = todayParisISO();
+
+  const [year, month, day] = today
+    .split("-")
+    .map(Number);
+
+  const expirationYear = year + 1;
+
+  const lastDayOfMonth = new Date(
+    Date.UTC(expirationYear, month, 0)
+  ).getUTCDate();
+
+  const expirationDay = Math.min(
+    day,
+    lastDayOfMonth
+  );
+
+  return `${expirationYear}-${String(month).padStart(2, "0")}-${String(
+    expirationDay
+  ).padStart(2, "0")}`;
 }
+
 
 async function initGiftCardsTable() {
   // Table principale des cartes cadeaux
@@ -511,6 +529,7 @@ async function sendGiftCardEmail({
   console.log("🎁 Carte cadeau envoyée à :", buyerEmail);
 
   if (brevoAdminTo) {
+  try {
     await tranEmailApi.sendTransacEmail({
       sender: { name: brevoSenderName, email: brevoSender },
       to: [{ email: brevoAdminTo }],
@@ -526,7 +545,15 @@ async function sendGiftCardEmail({
         <p><strong>Expiration :</strong> ${expirationFormatted}</p>
       `,
     });
+
+    console.log("🎁 Copie carte cadeau envoyée à l'admin :", brevoAdminTo);
+  } catch (err) {
+    console.error(
+      "⚠️ Carte cadeau envoyée au client mais copie admin Brevo échouée :",
+      err
+    );
   }
+}
 }
 
 async function processGiftCard(session) {
