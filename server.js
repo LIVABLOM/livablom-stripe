@@ -434,9 +434,9 @@ async function sendGiftCardEmail({
   expiresAt,
 }) {
   if (!brevoApiKey) {
-    console.warn("⚠️ Brevo désactivé : carte cadeau non envoyée.");
-    return;
-  }
+  console.warn("⚠️ Brevo désactivé : carte cadeau non envoyée.");
+  return false;
+}
 
   const tranEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
@@ -554,6 +554,7 @@ async function sendGiftCardEmail({
     );
   }
 }
+return true;
 }
 
 async function processGiftCard(session) {
@@ -653,7 +654,7 @@ if (giftCard.email_sent) {
   return;
 }
 
-  await sendGiftCardEmail({
+  const emailSent = await sendGiftCardEmail({
   buyerName,
   buyerEmail,
   recipientName,
@@ -664,16 +665,17 @@ if (giftCard.email_sent) {
   expiresAt: toISODate(giftCard.expires_at),
 });
 
-await pool.query(
-  `
-    UPDATE gift_cards
-    SET email_sent = TRUE,
-        email_sent_at = NOW()
-    WHERE id = $1
-  `,
-  [giftCard.id]
-);
-
+if (emailSent) {
+  await pool.query(
+    `
+      UPDATE gift_cards
+      SET email_sent = TRUE,
+          email_sent_at = NOW()
+      WHERE id = $1
+    `,
+    [giftCard.id]
+  );
+}
   console.log(
     `✅ Carte cadeau créée : ${code} - ${amountCents / 100} €`
   );
@@ -696,7 +698,10 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  if (event.type === "checkout.session.completed") {
+  if (
+  event.type === "checkout.session.completed" ||
+  event.type === "checkout.session.async_payment_succeeded"
+) {
     const session = event.data.object;
     console.log("💰 Paiement confirmé par Stripe :", session.id);
 
@@ -705,6 +710,15 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
       // 🎁 Carte cadeau : traitement séparé des réservations
      if (isGiftCardPayment(session)) {
   console.log("🎁 Paiement carte cadeau détecté :", session.payment_link);
+
+  if (session.payment_status !== "paid") {
+  console.log(
+    "⏳ Carte cadeau en attente de confirmation du paiement :",
+    session.id
+  );
+
+  return res.json({ received: true });
+}
 
   try {
     await processGiftCard(session);
