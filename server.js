@@ -55,9 +55,8 @@ const stripeKey = isTestMode
   ? process.env.STRIPE_TEST_KEY
   : process.env.STRIPE_SECRET_KEY;
 
-const stripeWebhookSecret = isTestMode
-  ? process.env.STRIPE_WEBHOOK_TEST_SECRET
-  : process.env.STRIPE_WEBHOOK_SECRET;
+const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+const stripeWebhookTestSecret = process.env.STRIPE_WEBHOOK_TEST_SECRET;
 
 const frontendUrl =
   NODE_ENV === "production"
@@ -690,15 +689,45 @@ const app = express();
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
+  let webhookMode;
+
   try {
-    event = stripe.webhooks.constructEvent(req.body, sig, stripeWebhookSecret);
-    console.log(`✅ Webhook Stripe vérifié : ${event.type}`);
+    try {
+      // 1️⃣ Tentative avec le secret LIVE
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        sig,
+        stripeWebhookSecret
+      );
+
+      webhookMode = "LIVE";
+    } catch (liveError) {
+      // 2️⃣ Si ce n'est pas du LIVE, tentative avec le secret TEST
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        sig,
+        stripeWebhookTestSecret
+      );
+
+      webhookMode = "TEST";
+    }
+
+    console.log(
+      `✅ Webhook Stripe ${webhookMode} vérifié : ${event.type}`
+    );
+
   } catch (err) {
-    console.error("❌ Webhook de signature invalide :", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
+    console.error(
+      "❌ Webhook Stripe refusé : signature LIVE et TEST invalides :",
+      err.message
+    );
+
+    return res
+      .status(400)
+      .send(`Webhook Error: ${err.message}`);
   }
 
-  if (
+   if (
   event.type === "checkout.session.completed" ||
   event.type === "checkout.session.async_payment_succeeded"
 ) {
