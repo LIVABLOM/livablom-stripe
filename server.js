@@ -759,6 +759,25 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     });
   }
 }
+// 🛡️ Ignore les événements Checkout qui ne sont
+// ni une carte cadeau BLŌM ni une réservation LIVABLŌM
+const isReservationPayment = Boolean(
+  session.metadata?.logement &&
+  session.metadata?.date_debut &&
+  session.metadata?.date_fin
+);
+
+if (!isReservationPayment) {
+  console.log(
+    "ℹ️ Checkout ignoré : ni carte cadeau BLŌM ni réservation complète :",
+    session.id
+  );
+
+  return res.json({
+    received: true,
+    ignored: true
+  });
+}
 
       if (session.metadata?.logement && session.metadata?.date_debut && session.metadata?.date_fin) {
         await pool.query(
