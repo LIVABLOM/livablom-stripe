@@ -1074,6 +1074,10 @@ app.post(
 // 💳 API Checkout Stripe
 // ========================================================
 app.post("/api/checkout", async (req, res) => {
+    return res.status(503).json({
+    error: "maintenance",
+    message: "Les réservations en ligne sont temporairement suspendues. Merci de nous contacter directement."
+  });
   try {
     const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
 
