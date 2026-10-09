@@ -1081,8 +1081,6 @@ app.post("/api/checkout", async (req, res) => {
   });
 
   try {
-
-  try {
     const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
 
     if (!logement || !startDate || !endDate || !amount || !email) {
