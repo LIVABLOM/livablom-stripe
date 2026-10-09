@@ -1075,6 +1075,13 @@ app.post(
 // ========================================================
 app.post("/api/checkout", async (req, res) => {
 
+  return res.status(503).json({
+    error: "maintenance",
+    message: "Réservations momentanément suspendues. Merci de réessayer dans quelques minutes."
+  });
+
+  try {
+
   try {
     const { logement, startDate, endDate, amount, personnes, name, email, phone } = req.body;
 
