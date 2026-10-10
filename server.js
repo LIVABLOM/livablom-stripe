@@ -1866,9 +1866,7 @@ app.post(
 // ========================================================
 
 app.post("/api/checkout", async (req, res) => {
-  // Maintenance temporaire pendant le déploiement coordonné.
-  return res.status(503).json({error:"maintenance",message:"Réservations momentanément suspendues. Merci de réessayer dans quelques minutes."});
-
+  
 
   try {
 
